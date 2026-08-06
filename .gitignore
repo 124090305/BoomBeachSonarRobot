@@ -7,3 +7,7 @@ runtime/
 *.log
 resources/screenshots/*
 !resources/screenshots/.gitkeep
+__pycache__/
+*.pyc
+__pycache__/
+*.pyc
