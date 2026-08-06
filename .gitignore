@@ -5,3 +5,5 @@ __pycache__/
 .idea/
 runtime/
 *.log
+resources/screenshots/*
+!resources/screenshots/.gitkeep
