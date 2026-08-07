@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import time
@@ -49,9 +50,24 @@ class AdbController:
         self.serial = serial.strip()
 
         if not self.serial:
-            raise ValueError("ADB 设备编号不能为空")
+            raise ValueError(
+                "ADB 设备编号不能为空"
+            )
 
-        self.adb_path = self._find_adb(adb_path)
+        self.adb_path = self._find_adb(
+            adb_path
+        )
+
+        # ROOT 状态缓存。
+        self._root_shell_ready = False
+        self._su_fallback = False
+        self._su_available: bool | None = None
+
+        # 游戏 UID 缓存。
+        self._package_uid_cache: dict[
+            str,
+            int,
+        ] = {}
 
     @staticmethod
     def _find_adb(
@@ -60,28 +76,38 @@ class AdbController:
         """
         查找 adb.exe。
 
-        查找顺序：
-        1. 创建控制器时传入的路径
-        2. config.py 中配置的路径
+        顺序：
+        1. 手动传入路径
+        2. config.py
         3. 系统 PATH
         """
         candidates: list[Path] = []
 
         if adb_path is not None:
-            candidates.append(Path(adb_path))
+            candidates.append(
+                Path(adb_path)
+            )
 
-        candidates.append(config.ADB_PATH)
+        candidates.append(
+            config.ADB_PATH
+        )
 
         for candidate in candidates:
-            candidate = candidate.expanduser()
+            candidate = (
+                candidate.expanduser()
+            )
 
             if candidate.is_file():
                 return candidate.resolve()
 
-        path_result = shutil.which("adb")
+        path_result = shutil.which(
+            "adb"
+        )
 
         if path_result:
-            return Path(path_result).resolve()
+            return Path(
+                path_result
+            ).resolve()
 
         checked_paths = ", ".join(
             str(path)
@@ -100,12 +126,17 @@ class AdbController:
         *,
         device: bool,
     ) -> list[str]:
-        """组装完整的 ADB 命令。"""
-        command = [str(self.adb_path)]
+        """组装完整 ADB 命令。"""
+        command = [
+            str(self.adb_path)
+        ]
 
         if device:
             command.extend(
-                ["-s", self.serial]
+                [
+                    "-s",
+                    self.serial,
+                ]
             )
 
         command.extend(
@@ -139,12 +170,17 @@ class AdbController:
                 timeout=timeout,
                 check=False,
             )
+
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
-                f"ADB 命令超时：{' '.join(command)}"
+                "ADB 命令超时："
+                f"{' '.join(command)}"
             ) from exc
 
-        if check and result.returncode != 0:
+        if (
+            check
+            and result.returncode != 0
+        ):
             raise AdbCommandError(
                 command=command,
                 returncode=result.returncode,
@@ -154,23 +190,23 @@ class AdbController:
 
         return result
 
-    def list_devices(self) -> dict[str, str]:
-        """
-        获取 ADB 设备列表。
-
-        返回示例：
-        {
-            "emulator-5554": "device"
-        }
-        """
+    def list_devices(
+        self,
+    ) -> dict[str, str]:
+        """获取 ADB 设备列表。"""
         result = self.run(
             ["devices"],
             device=False,
         )
 
-        devices: dict[str, str] = {}
+        devices: dict[
+            str,
+            str,
+        ] = {}
 
-        lines = result.stdout.splitlines()
+        lines = (
+            result.stdout.splitlines()
+        )
 
         for line in lines[1:]:
             line = line.strip()
@@ -183,15 +219,20 @@ class AdbController:
             if len(parts) >= 2:
                 serial = parts[0]
                 state = parts[1]
+
                 devices[serial] = state
 
         return devices
 
-    def ensure_device_online(self) -> None:
-        """确认目标设备在线并且状态正常。"""
+    def ensure_device_online(
+        self,
+    ) -> None:
+        """确认目标设备在线。"""
         devices = self.list_devices()
 
-        state = devices.get(self.serial)
+        state = devices.get(
+            self.serial
+        )
 
         if state == "device":
             return
@@ -203,15 +244,265 @@ class AdbController:
             )
 
         raise RuntimeError(
-            f"设备 {self.serial} 当前状态为 {state}，暂时不可用"
+            f"设备 {self.serial} "
+            f"当前状态为 {state}"
         )
+
+    def wait_until_online(
+        self,
+        timeout: float = 8.0,
+    ) -> None:
+        """等待 adb root 后设备重新上线。"""
+        deadline = (
+            time.monotonic()
+            + timeout
+        )
+
+        while (
+            time.monotonic()
+            < deadline
+        ):
+            try:
+                self.ensure_device_online()
+                return
+
+            except RuntimeError:
+                time.sleep(0.4)
+
+        self.ensure_device_online()
+
+    # =========================================================
+    # ROOT
+    # =========================================================
+
+    def ensure_root_shell(
+        self,
+    ) -> str:
+        """
+        准备 ROOT shell。
+
+        返回：
+        adb-root
+        su-c
+        """
+        self.ensure_device_online()
+
+        if self._root_shell_ready:
+            if self._su_fallback:
+                return "su-c"
+
+            return "adb-root"
+
+        # 当前 shell 已经是 ROOT。
+        if self._is_root_shell():
+            self._root_shell_ready = True
+            self._su_fallback = False
+
+            return "adb-root"
+
+        # 尝试 adb root。
+        self.run(
+            ["root"],
+            check=False,
+        )
+
+        time.sleep(1.0)
+
+        try:
+            self.wait_until_online()
+
+        except RuntimeError:
+            pass
+
+        if self._is_root_shell():
+            self._root_shell_ready = True
+            self._su_fallback = False
+
+            return "adb-root"
+
+        # adb root 不可用时尝试 su -c。
+        if self._is_su_available():
+            self._root_shell_ready = True
+            self._su_fallback = True
+
+            return "su-c"
+
+        raise RuntimeError(
+            "当前模拟器没有可用 ROOT 权限。"
+            "请先在雷电模拟器设置中开启 ROOT 权限。"
+        )
+
+    def run_privileged(
+        self,
+        script: str,
+        *,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        """使用 ROOT 权限执行 shell 命令。"""
+        if not script.strip():
+            raise ValueError(
+                "特权命令不能为空"
+            )
+
+        self.ensure_root_shell()
+
+        quoted_script = (
+            self._quote_shell_arg(
+                script
+            )
+        )
+
+        if self._su_fallback:
+            return self.run(
+                [
+                    "shell",
+                    "su",
+                    "-c",
+                    quoted_script,
+                ],
+                check=check,
+            )
+
+        return self.run(
+            [
+                "shell",
+                "sh",
+                "-c",
+                quoted_script,
+            ],
+            check=check,
+        )
+
+    def get_package_uid(
+        self,
+        package_name: str,
+    ) -> int:
+        """获取指定应用的安卓 UID。"""
+        package_name = (
+            package_name.strip()
+        )
+
+        if not package_name:
+            raise ValueError(
+                "应用包名不能为空"
+            )
+
+        cached = (
+            self._package_uid_cache.get(
+                package_name
+            )
+        )
+
+        if cached is not None:
+            return cached
+
+        result = self.run(
+            [
+                "shell",
+                "cmd",
+                "package",
+                "list",
+                "packages",
+                "-U",
+                package_name,
+            ],
+            check=False,
+        )
+
+        match = re.search(
+            rf"package:{re.escape(package_name)}"
+            rf"\s+uid:(\d+)",
+            result.stdout,
+        )
+
+        if match is None:
+            raise RuntimeError(
+                "没有找到游戏 UID："
+                f"{package_name}"
+            )
+
+        uid = int(
+            match.group(1)
+        )
+
+        self._package_uid_cache[
+            package_name
+        ] = uid
+
+        return uid
+
+    def _is_root_shell(
+        self,
+    ) -> bool:
+        """检查 adb shell 是否拥有 ROOT。"""
+        result = self.run(
+            [
+                "shell",
+                "id",
+                "-u",
+            ],
+            check=False,
+        )
+
+        return (
+            result.returncode == 0
+            and result.stdout.strip()
+            == "0"
+        )
+
+    def _is_su_available(
+        self,
+    ) -> bool:
+        """检查 su -c 是否可以获取 ROOT。"""
+        if (
+            self._su_available
+            is not None
+        ):
+            return self._su_available
+
+        result = self.run(
+            [
+                "shell",
+                "su",
+                "-c",
+                "id -u",
+            ],
+            check=False,
+        )
+
+        self._su_available = (
+            result.returncode == 0
+            and result.stdout.strip()
+            == "0"
+        )
+
+        return self._su_available
+
+    @staticmethod
+    def _quote_shell_arg(
+        text: str,
+    ) -> str:
+        """把文本包成 shell 单引号参数。"""
+        return (
+            "'"
+            + text.replace(
+                "'",
+                "'\\''",
+            )
+            + "'"
+        )
+
+    # =========================================================
+    # 截图
+    # =========================================================
 
     def take_screenshot(
         self,
         output_path: str | Path | None = None,
     ) -> Path:
-        """截取设备画面并保存为 PNG 文件。"""
+        """截取设备画面并保存 PNG。"""
         self.ensure_device_online()
+
         config.ensure_directories()
 
         if output_path is None:
@@ -220,7 +511,9 @@ class AdbController:
                 / config.DEFAULT_SCREENSHOT_NAME
             )
         else:
-            path = Path(output_path)
+            path = Path(
+                output_path
+            )
 
         path.parent.mkdir(
             parents=True,
@@ -243,6 +536,7 @@ class AdbController:
                 timeout=config.SCREENSHOT_TIMEOUT,
                 check=False,
             )
+
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 "模拟器截图超时，"
@@ -250,9 +544,11 @@ class AdbController:
             ) from exc
 
         if result.returncode != 0:
-            stderr = result.stderr.decode(
-                "utf-8",
-                errors="replace",
+            stderr = (
+                result.stderr.decode(
+                    "utf-8",
+                    errors="replace",
+                )
             )
 
             raise AdbCommandError(
@@ -266,24 +562,26 @@ class AdbController:
                 "ADB 截图返回了空数据"
             )
 
-        path.write_bytes(result.stdout)
+        path.write_bytes(
+            result.stdout
+        )
 
-        # 保存后立即读取一次，确认 PNG 有效。
-        image = self.read_image(path)
+        image = self.read_image(
+            path
+        )
 
         if image.size == 0:
             raise RuntimeError(
-                f"截图文件没有有效内容：{path}"
+                "截图文件没有有效内容："
+                f"{path}"
             )
 
         return path.resolve()
 
-    def read_screenshot(self) -> np.ndarray:
-        """
-        直接获取模拟器截图。
-
-        返回 OpenCV 图片，不保存文件。
-        """
+    def read_screenshot(
+        self,
+    ) -> np.ndarray:
+        """直接读取当前模拟器截图。"""
         self.ensure_device_online()
 
         command = self._build_command(
@@ -302,6 +600,7 @@ class AdbController:
                 timeout=config.SCREENSHOT_TIMEOUT,
                 check=False,
             )
+
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 "模拟器截图超时，"
@@ -309,9 +608,11 @@ class AdbController:
             ) from exc
 
         if result.returncode != 0:
-            stderr = result.stderr.decode(
-                "utf-8",
-                errors="replace",
+            stderr = (
+                result.stderr.decode(
+                    "utf-8",
+                    errors="replace",
+                )
             )
 
             raise AdbCommandError(
@@ -335,7 +636,10 @@ class AdbController:
             cv2.IMREAD_COLOR,
         )
 
-        if image is None or image.size == 0:
+        if (
+            image is None
+            or image.size == 0
+        ):
             raise RuntimeError(
                 "无法解码 ADB 返回的截图数据"
             )
@@ -346,12 +650,15 @@ class AdbController:
     def read_image(
         path: str | Path,
     ) -> np.ndarray:
-        """读取图片，兼容中文文件路径。"""
-        image_path = Path(path)
+        """读取图片，兼容中文路径。"""
+        image_path = Path(
+            path
+        )
 
         if not image_path.is_file():
             raise FileNotFoundError(
-                f"图片不存在：{image_path}"
+                "图片不存在："
+                f"{image_path}"
             )
 
         image_data = np.fromfile(
@@ -364,9 +671,13 @@ class AdbController:
             cv2.IMREAD_COLOR,
         )
 
-        if image is None or image.size == 0:
+        if (
+            image is None
+            or image.size == 0
+        ):
             raise RuntimeError(
-                f"图片解码失败：{image_path}"
+                "图片解码失败："
+                f"{image_path}"
             )
 
         return image
@@ -374,12 +685,20 @@ class AdbController:
     def get_screenshot_size(
         self,
     ) -> tuple[int, int]:
-        """返回实际截图的宽度和高度。"""
-        image = self.read_screenshot()
+        """返回截图宽度和高度。"""
+        image = (
+            self.read_screenshot()
+        )
 
-        height, width = image.shape[:2]
+        height, width = (
+            image.shape[:2]
+        )
 
         return width, height
+
+    # =========================================================
+    # 输入控制
+    # =========================================================
 
     def click(
         self,
@@ -419,12 +738,18 @@ class AdbController:
             ]
         )
 
+    # =========================================================
+    # APP 控制
+    # =========================================================
+
     def is_package_installed(
         self,
         package_name: str,
     ) -> bool:
-        """检查设备中是否安装了指定应用。"""
-        package_name = package_name.strip()
+        """检查应用是否安装。"""
+        package_name = (
+            package_name.strip()
+        )
 
         if not package_name:
             raise ValueError(
@@ -443,15 +768,19 @@ class AdbController:
 
         return (
             result.returncode == 0
-            and bool(result.stdout.strip())
+            and bool(
+                result.stdout.strip()
+            )
         )
 
     def open_app(
         self,
         package_name: str,
     ) -> None:
-        """通过应用包名启动游戏。"""
-        package_name = package_name.strip()
+        """通过包名启动游戏。"""
+        package_name = (
+            package_name.strip()
+        )
 
         if not package_name:
             raise ValueError(
@@ -488,8 +817,10 @@ class AdbController:
         self,
         package_name: str,
     ) -> None:
-        """通过应用包名强制关闭游戏。"""
-        package_name = package_name.strip()
+        """强制关闭应用。"""
+        package_name = (
+            package_name.strip()
+        )
 
         if not package_name:
             raise ValueError(
@@ -510,11 +841,15 @@ class AdbController:
         seconds: float,
     ) -> None:
         """等待指定秒数。"""
-        seconds = float(seconds)
+        seconds = float(
+            seconds
+        )
 
         if seconds < 0:
             raise ValueError(
                 "等待时间不能小于 0"
             )
 
-        time.sleep(seconds)
+        time.sleep(
+            seconds
+        )

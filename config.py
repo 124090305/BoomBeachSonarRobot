@@ -31,8 +31,21 @@ SCREENSHOT_TIMEOUT = 15.0
 GAME_RESTART_DELAY = 10.0
 DEFAULT_MATCH_THRESHOLD = 0.85
 
+# 网络控制使用独立 iptables 链。
+WEAK_NETWORK_CHAIN = "BBSR_WEAKNET"
+REJECT_NETWORK_CHAIN = "BBSR_REJECTNET"
+
+NETWORK_APPLY_DELAY = 0.2
+
 
 def ensure_directories() -> None:
     """创建程序运行需要的目录。"""
-    TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    TEMPLATE_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    SCREENSHOT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )

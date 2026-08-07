@@ -3,21 +3,33 @@ from __future__ import annotations
 import os
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+
+from tkinter import (
+    messagebox,
+    ttk,
+)
+
 from typing import Callable
 
 import config
+
 from controllers import (
     AdbController,
     GameController,
+    NetworkController,
 )
-from flows import run_screenshot_check
+
+from flows import (
+    run_screenshot_check,
+)
 
 
 class App(tk.Tk):
-    """当前阶段的轻量图形控制界面。"""
+    """当前阶段的轻量控制界面。"""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+    ) -> None:
         super().__init__()
 
         self.title(
@@ -25,32 +37,54 @@ class App(tk.Tk):
         )
 
         self.geometry(
-            "680x420"
+            "820x500"
         )
 
         self.minsize(
-            620,
-            360,
+            760,
+            440,
         )
 
         self.adb = AdbController()
 
-        self.game = GameController(
-            self.adb
+        self.network = (
+            NetworkController(
+                self.adb
+            )
         )
 
-        self.status_var = tk.StringVar(
-            value="等待操作"
+        self.game = (
+            GameController(
+                self.adb,
+                network=self.network,
+            )
         )
 
-        self.device_var = tk.StringVar(
-            value=config.ADB_SERIAL
+        self.status_var = (
+            tk.StringVar(
+                value="等待操作"
+            )
         )
+
+        self.device_var = (
+            tk.StringVar(
+                value=config.ADB_SERIAL
+            )
+        )
+
+        self._closing = False
 
         self._build_ui()
 
-    def _build_ui(self) -> None:
-        """创建界面控件。"""
+        self.protocol(
+            "WM_DELETE_WINDOW",
+            self.on_close,
+        )
+
+    def _build_ui(
+        self,
+    ) -> None:
+        """创建界面。"""
         container = ttk.Frame(
             self,
             padding=18,
@@ -90,20 +124,21 @@ class App(tk.Tk):
             column=2,
         )
 
-        button_row = ttk.Frame(
+        # 基础控制按钮
+        basic_row = ttk.Frame(
             container
         )
 
-        button_row.grid(
+        basic_row.grid(
             row=1,
             column=0,
             columnspan=3,
             sticky=tk.EW,
-            pady=16,
+            pady=(16, 8),
         )
 
         ttk.Button(
-            button_row,
+            basic_row,
             text="检查设备",
             command=self.check_device,
         ).pack(
@@ -112,7 +147,7 @@ class App(tk.Tk):
         )
 
         ttk.Button(
-            button_row,
+            basic_row,
             text="获取截图",
             command=self.take_screenshot,
         ).pack(
@@ -121,7 +156,7 @@ class App(tk.Tk):
         )
 
         ttk.Button(
-            button_row,
+            basic_row,
             text="重启游戏",
             command=self.restart_game,
         ).pack(
@@ -130,9 +165,85 @@ class App(tk.Tk):
         )
 
         ttk.Button(
-            button_row,
+            basic_row,
             text="打开截图目录",
             command=self.open_screenshot_dir,
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+        )
+
+        # 网络控制按钮
+        network_row = ttk.Frame(
+            container
+        )
+
+        network_row.grid(
+            row=2,
+            column=0,
+            columnspan=3,
+            sticky=tk.EW,
+            pady=(0, 14),
+        )
+
+        ttk.Button(
+            network_row,
+            text="检查 ROOT",
+            command=self.check_root,
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+        )
+
+        ttk.Button(
+            network_row,
+            text="开启弱网",
+            command=self.enable_weak_network,
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+        )
+
+        ttk.Button(
+            network_row,
+            text="关闭弱网",
+            command=self.disable_weak_network,
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+        )
+
+        ttk.Button(
+            network_row,
+            text="开启断网",
+            command=self.enable_reject_network,
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+        )
+
+        ttk.Button(
+            network_row,
+            text="关闭断网",
+            command=self.disable_reject_network,
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+        )
+
+        ttk.Button(
+            network_row,
+            text="恢复网络",
+            command=self.restore_network,
+        ).pack(
+            side=tk.LEFT,
+            padx=4,
+        )
+
+        ttk.Button(
+            network_row,
+            text="网络状态",
+            command=self.check_network_state,
         ).pack(
             side=tk.LEFT,
             padx=4,
@@ -142,7 +253,7 @@ class App(tk.Tk):
             container,
             text="状态：",
         ).grid(
-            row=2,
+            row=3,
             column=0,
             sticky=tk.NW,
         )
@@ -151,7 +262,7 @@ class App(tk.Tk):
             container,
             textvariable=self.status_var,
         ).grid(
-            row=2,
+            row=3,
             column=1,
             columnspan=2,
             sticky=tk.W,
@@ -159,12 +270,12 @@ class App(tk.Tk):
 
         self.log_text = tk.Text(
             container,
-            height=14,
+            height=15,
             wrap=tk.WORD,
         )
 
         self.log_text.grid(
-            row=3,
+            row=4,
             column=0,
             columnspan=3,
             sticky=tk.NSEW,
@@ -177,28 +288,49 @@ class App(tk.Tk):
         )
 
         container.rowconfigure(
-            3,
+            4,
             weight=1,
         )
 
-    def apply_device(self) -> None:
-        """使用输入框中的设备编号创建控制器。"""
-        serial = self.device_var.get().strip()
+    # =========================================================
+    # 控制器切换
+    # =========================================================
+
+    def apply_device(
+        self,
+    ) -> None:
+        """切换 ADB 设备。"""
+        serial = (
+            self.device_var.get()
+            .strip()
+        )
 
         if not serial:
             messagebox.showwarning(
                 "设备编号为空",
                 "请输入 ADB 设备编号",
             )
+
             return
 
         try:
-            self.adb = AdbController(
-                serial=serial
+            self.adb = (
+                AdbController(
+                    serial=serial
+                )
             )
 
-            self.game = GameController(
-                self.adb
+            self.network = (
+                NetworkController(
+                    self.adb
+                )
+            )
+
+            self.game = (
+                GameController(
+                    self.adb,
+                    network=self.network,
+                )
             )
 
             self._write_log(
@@ -206,15 +338,25 @@ class App(tk.Tk):
             )
 
         except Exception as exc:
-            self._show_error(exc)
+            self._show_error(
+                exc
+            )
 
-    def check_device(self) -> None:
-        """检查当前模拟器是否在线。"""
+    # =========================================================
+    # 基础功能
+    # =========================================================
+
+    def check_device(
+        self,
+    ) -> None:
+        """检查设备。"""
 
         def task() -> str:
             self.adb.ensure_device_online()
 
-            devices = self.adb.list_devices()
+            devices = (
+                self.adb.list_devices()
+            )
 
             return (
                 f"设备正常：{self.adb.serial}\n"
@@ -226,12 +368,16 @@ class App(tk.Tk):
             task,
         )
 
-    def take_screenshot(self) -> None:
-        """执行截图检查流程。"""
+    def take_screenshot(
+        self,
+    ) -> None:
+        """截图。"""
 
         def task() -> str:
-            result = run_screenshot_check(
-                self.adb
+            result = (
+                run_screenshot_check(
+                    self.adb
+                )
             )
 
             return (
@@ -244,38 +390,238 @@ class App(tk.Tk):
             task,
         )
 
-    def restart_game(self) -> None:
-        """重启海岛奇兵应用。"""
+    def restart_game(
+        self,
+    ) -> None:
+        """恢复网络并重启游戏。"""
 
         def task() -> str:
             self.game.restart_game()
 
-            return "游戏已重启"
+            return (
+                "网络已恢复，游戏已重启"
+            )
 
         self._run_task(
-            "正在重启游戏...",
+            "正在恢复网络并重启游戏...",
             task,
         )
 
-    def open_screenshot_dir(self) -> None:
-        """使用资源管理器打开截图目录。"""
+    # =========================================================
+    # 网络功能
+    # =========================================================
+
+    def check_root(
+        self,
+    ) -> None:
+        """检查 ROOT 与 UID。"""
+
+        def task() -> str:
+            return (
+                self.network
+                .get_root_info()
+            )
+
+        self._run_task(
+            "正在检查 ROOT...",
+            task,
+        )
+
+    def enable_weak_network(
+        self,
+    ) -> None:
+        """开启弱网。"""
+
+        def task() -> str:
+            self.network.enable_weak_network()
+
+            return (
+                "弱网 DROP 已开启"
+            )
+
+        self._run_task(
+            "正在开启弱网...",
+            task,
+        )
+
+    def disable_weak_network(
+        self,
+    ) -> None:
+        """关闭弱网。"""
+
+        def task() -> str:
+            self.network.disable_weak_network()
+
+            return (
+                "弱网 DROP 已关闭"
+            )
+
+        self._run_task(
+            "正在关闭弱网...",
+            task,
+        )
+
+    def enable_reject_network(
+        self,
+    ) -> None:
+        """开启断网。"""
+
+        def task() -> str:
+            self.network.enable_reject_network()
+
+            return (
+                "断网 REJECT 已开启"
+            )
+
+        self._run_task(
+            "正在开启断网...",
+            task,
+        )
+
+    def disable_reject_network(
+        self,
+    ) -> None:
+        """关闭断网。"""
+
+        def task() -> str:
+            self.network.disable_reject_network()
+
+            return (
+                "断网 REJECT 已关闭"
+            )
+
+        self._run_task(
+            "正在关闭断网...",
+            task,
+        )
+
+    def restore_network(
+        self,
+    ) -> None:
+        """恢复正常网络。"""
+
+        def task() -> str:
+            self.network.restore_network()
+
+            return (
+                "游戏网络已恢复"
+            )
+
+        self._run_task(
+            "正在恢复游戏网络...",
+            task,
+        )
+
+    def check_network_state(
+        self,
+    ) -> None:
+        """读取网络状态。"""
+
+        def task() -> str:
+            state = (
+                self.network.get_state()
+            )
+
+            return state.to_text()
+
+        self._run_task(
+            "正在检查网络状态...",
+            task,
+        )
+
+    # =========================================================
+    # 其他 GUI 功能
+    # =========================================================
+
+    def open_screenshot_dir(
+        self,
+    ) -> None:
+        """打开截图目录。"""
         config.ensure_directories()
 
-        path = config.SCREENSHOT_DIR.resolve()
+        path = (
+            config.SCREENSHOT_DIR
+            .resolve()
+        )
 
         try:
             os.startfile(
                 str(path)
             )
+
         except Exception as exc:
-            self._show_error(exc)
+            self._show_error(
+                exc
+            )
+
+    def on_close(
+        self,
+    ) -> None:
+        """关闭程序前恢复网络。"""
+        if self._closing:
+            return
+
+        self._closing = True
+
+        self.status_var.set(
+            "正在恢复网络并退出..."
+        )
+
+        self._write_log(
+            "窗口关闭：正在清理网络规则..."
+        )
+
+        def worker() -> None:
+            try:
+                self.network.restore_network()
+
+            except Exception as exc:
+                message = (
+                    "退出清理失败："
+                    f"{exc}"
+                )
+
+            else:
+                message = (
+                    "退出清理完成"
+                )
+
+            self.after(
+                0,
+                lambda text=message:
+                self._finish_close(
+                    text
+                ),
+            )
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+        ).start()
+
+    def _finish_close(
+        self,
+        message: str,
+    ) -> None:
+        self._write_log(
+            message
+        )
+
+        self.destroy()
+
+    # =========================================================
+    # 通用线程处理
+    # =========================================================
 
     def _run_task(
         self,
         running_text: str,
-        task: Callable[[], str],
+        task: Callable[
+            [],
+            str,
+        ],
     ) -> None:
-        """在线程中执行耗时任务，防止界面卡住。"""
+        """后台执行耗时任务。"""
         self.status_var.set(
             running_text
         )
@@ -287,18 +633,22 @@ class App(tk.Tk):
         def worker() -> None:
             try:
                 message = task()
+
             except Exception as exc:
                 self.after(
                     0,
-                    lambda error=exc: self._show_error(
+                    lambda error=exc:
+                    self._show_error(
                         error
                     ),
                 )
+
                 return
 
             self.after(
                 0,
-                lambda text=message: self._show_success(
+                lambda text=message:
+                self._show_success(
                     text
                 ),
             )
@@ -324,7 +674,9 @@ class App(tk.Tk):
         self,
         error: Exception,
     ) -> None:
-        message = str(error)
+        message = str(
+            error
+        )
 
         self.status_var.set(
             "操作失败"
