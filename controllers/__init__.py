@@ -12,6 +12,10 @@ from .network_controller import (
     NetworkState,
 )
 
+from .page_controller import (
+    PageController,
+)
+
 
 __all__ = [
     "AdbCommandError",
@@ -19,4 +23,5 @@ __all__ = [
     "GameController",
     "NetworkController",
     "NetworkState",
+    "PageController",
 ]
