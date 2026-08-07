@@ -21,7 +21,7 @@ GAME_PACKAGE_NAME = os.getenv(
 
 RESOURCE_DIR = PROJECT_ROOT / "resources"
 TEMPLATE_DIR = RESOURCE_DIR / "templates"
-SCREENSHOT_DIR = RESOURCE_DIR / "screenshots"
+SCREENSHOT_DIR = RUNTIME_DIR / "screenshots"
 
 # 运行文件。
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
