@@ -63,19 +63,16 @@ class GameController:
         self,
         wait_seconds: float = config.GAME_RESTART_DELAY,
     ) -> None:
-        """恢复网络后重启游戏。"""
+        """关闭游戏、恢复网络，然后重新启动游戏。"""
         logger.info(
             "开始重启游戏：%s",
             self.package_name,
         )
 
         self.adb.ensure_device_online()
-
         self.ensure_game_installed()
 
-        if self.network is not None:
-            self.network.restore_network()
-
+        # 1. 关闭游戏
         self.adb.close_app(
             self.package_name
         )
@@ -84,10 +81,16 @@ class GameController:
             1.0
         )
 
+        # 2. 恢复网络
+        if self.network is not None:
+            self.network.restore_network()
+
+        # 3. 启动游戏
         self.adb.open_app(
             self.package_name
         )
 
+        # 4. 等待加载
         self.adb.delay(
             wait_seconds
         )
