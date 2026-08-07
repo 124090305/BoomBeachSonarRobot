@@ -21,10 +21,10 @@ GAME_PACKAGE_NAME = os.getenv(
 
 RESOURCE_DIR = PROJECT_ROOT / "resources"
 TEMPLATE_DIR = RESOURCE_DIR / "templates"
-SCREENSHOT_DIR = RUNTIME_DIR / "screenshots"
 
 # 运行文件。
 RUNTIME_DIR = PROJECT_ROOT / "runtime"
+SCREENSHOT_DIR = RUNTIME_DIR / "screenshots"
 LOG_DIR = RUNTIME_DIR / "logs"
 LOG_FILE = LOG_DIR / "boom_beach_sonar_robot.log"
 LOG_LEVEL = os.getenv(
