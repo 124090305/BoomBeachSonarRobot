@@ -146,7 +146,7 @@ def main() -> int:
     config.ensure_directories()
 
     if args.action == "gui":
-        from gui_app import (
+        from ui.gui_app import (
             main as run_gui,
         )
 

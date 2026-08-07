@@ -14,6 +14,7 @@ from tkinter import (
 from typing import Callable
 
 import config
+import config_test
 
 from controllers import (
     AdbController,
@@ -30,6 +31,15 @@ from logger import (
     attach_log_handler,
     detach_log_handler,
     get_logger,
+)
+
+from sonar import (
+    CellState,
+    SonarBoard,
+)
+
+from ui import (
+    SonarBoardView,
 )
 
 
@@ -76,12 +86,12 @@ class App(tk.Tk):
         )
 
         self.geometry(
-            "820x500"
+            "980x780"
         )
 
         self.minsize(
-            760,
-            440,
+            900,
+            700,
         )
 
         self._log_queue: queue.Queue[str] = (
@@ -110,6 +120,17 @@ class App(tk.Tk):
                 network=self.network,
             )
         )
+
+        # 当前阶段先使用 config_test 中的固定棋盘配置。
+        self.sonar_board = SonarBoard(
+            n=config_test.TEST_GRID_SIZE,
+            submarines=config_test.TEST_SUBMARINES,
+        )
+
+        if config_test.TEST_BOARD_QUAD is not None:
+            self.sonar_board.set_screen_quad(
+                config_test.TEST_BOARD_QUAD
+            )
 
         self.status_var = (
             tk.StringVar(
@@ -330,7 +351,7 @@ class App(tk.Tk):
 
         self.log_text = tk.Text(
             container,
-            height=15,
+            height=10,
             wrap=tk.WORD,
         )
 
@@ -342,6 +363,59 @@ class App(tk.Tk):
             pady=(12, 0),
         )
 
+        # 声纳棋盘
+        board_section = ttk.LabelFrame(
+            container,
+            text="棋盘同步",
+            padding=10,
+        )
+
+        board_section.grid(
+            row=5,
+            column=0,
+            columnspan=3,
+            sticky=tk.NSEW,
+            pady=(12, 0),
+        )
+
+        board_actions = ttk.Frame(
+            board_section
+        )
+
+        board_actions.pack(
+            fill=tk.X,
+            pady=(0, 8),
+        )
+
+        ttk.Button(
+            board_actions,
+            text="重置棋盘状态",
+            command=self.reset_sonar_board,
+        ).pack(
+            side=tk.LEFT,
+        )
+
+        ttk.Label(
+            board_actions,
+            text=(
+                "当前配置来自 config_test.py；"
+                "模拟器外角坐标填入后会自动生成 100 个点击中心"
+            ),
+        ).pack(
+            side=tk.LEFT,
+            padx=(12, 0),
+        )
+
+        self.board_view = SonarBoardView(
+            board_section,
+            board=self.sonar_board,
+        )
+
+        self.board_view.pack(
+            fill=tk.BOTH,
+            expand=True,
+        )
+
         container.columnconfigure(
             1,
             weight=1,
@@ -350,6 +424,11 @@ class App(tk.Tk):
         container.rowconfigure(
             4,
             weight=1,
+        )
+
+        container.rowconfigure(
+            5,
+            weight=2,
         )
 
     # =========================================================
@@ -587,6 +666,63 @@ class App(tk.Tk):
         self._run_task(
             "正在检查网络状态...",
             task,
+        )
+
+    # =========================================================
+    # 棋盘功能
+    # =========================================================
+
+    def reset_sonar_board(
+        self,
+    ) -> None:
+        """清空棋盘探测状态，保留坐标映射。"""
+        self.sonar_board.reset()
+
+        self._write_log(
+            "声纳棋盘状态已重置"
+        )
+
+    def set_board_selected(
+        self,
+        row: int,
+        col: int,
+    ) -> None:
+        """
+        后续选格策略可以直接调用。
+
+        例：
+        self.set_board_selected(3, 5)
+        """
+        self.sonar_board.select_cell(
+            row,
+            col,
+        )
+
+    def set_board_result(
+        self,
+        row: int,
+        col: int,
+        hit: bool,
+    ) -> None:
+        """
+        后续命中判断可以直接调用。
+
+        hit=True  -> GUI 显示命中
+        hit=False -> GUI 显示未命中
+        """
+        self.sonar_board.report_result(
+            row,
+            col,
+            hit=hit,
+        )
+
+    def set_board_sunk(
+        self,
+        cells: list[tuple[int, int]],
+    ) -> None:
+        """后续策略确认完整潜艇后可以直接调用。"""
+        self.sonar_board.mark_sunk(
+            cells
         )
 
     # =========================================================
