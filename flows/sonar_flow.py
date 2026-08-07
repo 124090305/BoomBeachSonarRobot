@@ -6,6 +6,10 @@ from pathlib import Path
 
 import config
 from controllers.adb_controller import AdbController
+from logger import get_logger
+
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,10 @@ def run_screenshot_check(
     → 读取截图
     → 验证截图尺寸
     """
+    logger.info(
+        "开始截图检查流程"
+    )
+
     config.ensure_directories()
 
     controller = (
@@ -63,9 +71,19 @@ def run_screenshot_check(
 
     height, width = image.shape[:2]
 
-    return ScreenshotCheckResult(
+    result = ScreenshotCheckResult(
         serial=controller.serial,
         path=screenshot_path,
         width=width,
         height=height,
     )
+
+    logger.info(
+        "截图检查完成：设备=%s，尺寸=%sx%s，文件=%s",
+        result.serial,
+        result.width,
+        result.height,
+        result.path,
+    )
+
+    return result

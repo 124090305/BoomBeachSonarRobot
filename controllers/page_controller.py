@@ -5,7 +5,11 @@ from pathlib import Path
 
 import config
 from controllers.adb_controller import AdbController
+from logger import get_logger
 from vision.image_match import MatchResult, find_template
+
+
+logger = get_logger(__name__)
 
 
 class PageController:
@@ -27,6 +31,12 @@ class PageController:
         if x < 0 or y < 0:
             raise ValueError("点击坐标不能小于 0")
 
+        logger.debug(
+            "点击坐标：(%s, %s)",
+            x,
+            y,
+        )
+
         self.adb.click(x, y)
         self._delay(wait_seconds)
 
@@ -44,6 +54,15 @@ class PageController:
 
         if duration_ms <= 0:
             raise ValueError("滑动时间必须大于 0")
+
+        logger.info(
+            "页面滑动：(%s, %s) -> (%s, %s)，%sms",
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            duration_ms,
+        )
 
         self.adb.swipe(
             int(start_x),
@@ -64,11 +83,27 @@ class PageController:
         template = self._resolve_template_path(template_path)
         screenshot = self.adb.read_screenshot()
 
-        return find_template(
+        match = find_template(
             screenshot,
             template,
             threshold=threshold,
         )
+
+        if match is None:
+            logger.debug(
+                "未找到模板：%s，阈值=%.3f",
+                template.name,
+                threshold,
+            )
+        else:
+            logger.info(
+                "找到模板：%s，相似度=%.3f，中心=%s",
+                template.name,
+                match.score,
+                match.center,
+            )
+
+        return match
 
     def template_exists(
         self,
@@ -103,8 +138,18 @@ class PageController:
 
         template = self._resolve_template_path(template_path)
         deadline = time.monotonic() + timeout
+        attempts = 0
+
+        logger.info(
+            "开始等待模板：%s，超时=%.1f秒，阈值=%.3f",
+            template.name,
+            timeout,
+            threshold,
+        )
 
         while True:
+            attempts += 1
+
             screenshot = self.adb.read_screenshot()
 
             match = find_template(
@@ -114,12 +159,33 @@ class PageController:
             )
 
             if match is not None:
+                logger.info(
+                    "等待模板成功：%s，相似度=%.3f，中心=%s，检测次数=%s",
+                    template.name,
+                    match.score,
+                    match.center,
+                    attempts,
+                )
+
                 return match
 
             remaining = deadline - time.monotonic()
 
             if remaining <= 0:
+                logger.warning(
+                    "等待模板超时：%s，%.1f秒内未出现，检测次数=%s",
+                    template.name,
+                    timeout,
+                    attempts,
+                )
+
                 return None
+
+            logger.debug(
+                "等待模板中：%s，第%s次未命中",
+                template.name,
+                attempts,
+            )
 
             self.adb.delay(
                 min(poll_interval, remaining)
@@ -180,6 +246,13 @@ class PageController:
     ) -> None:
         """点击已经找到的匹配区域中心。"""
         x, y = match.center
+
+        logger.info(
+            "点击匹配区域中心：(%s, %s)，相似度=%.3f",
+            x,
+            y,
+            match.score,
+        )
 
         self.click_point(
             x,

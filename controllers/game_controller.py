@@ -9,6 +9,10 @@ from controllers.adb_controller import (
 from controllers.network_controller import (
     NetworkController,
 )
+from logger import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class GameController:
@@ -50,11 +54,21 @@ class GameController:
                 "请确认 config.py 中的 GAME_PACKAGE_NAME。"
             )
 
+        logger.debug(
+            "游戏安装检查通过：%s",
+            self.package_name,
+        )
+
     def restart_game(
         self,
         wait_seconds: float = config.GAME_RESTART_DELAY,
     ) -> None:
         """恢复网络后重启游戏。"""
+        logger.info(
+            "开始重启游戏：%s",
+            self.package_name,
+        )
+
         self.adb.ensure_device_online()
 
         self.ensure_game_installed()
@@ -78,11 +92,20 @@ class GameController:
             wait_seconds
         )
 
+        logger.info(
+            "游戏重启完成，已等待 %.1f 秒",
+            wait_seconds,
+        )
+
     def take_screenshot(
         self,
         output_path: str | Path | None = None,
     ) -> Path:
         """获取当前游戏截图。"""
+        logger.debug(
+            "获取游戏截图"
+        )
+
         return self.adb.take_screenshot(
             output_path
         )

@@ -6,6 +6,10 @@ import config
 from controllers.adb_controller import (
     AdbController,
 )
+from logger import get_logger
+
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -100,6 +104,10 @@ class NetworkController:
         iptables
         UID
         """
+        logger.debug(
+            "检查网络控制环境"
+        )
+
         self.adb.ensure_device_online()
 
         installed = (
@@ -138,6 +146,12 @@ class NetworkController:
             self.package_name
         )
 
+        logger.debug(
+            "网络控制环境正常：ROOT=%s，UID=%s",
+            root_mode,
+            uid,
+        )
+
         return root_mode, uid
 
     def get_root_info(
@@ -161,6 +175,10 @@ class NetworkController:
         self,
     ) -> None:
         """开启 DROP 弱网。"""
+        logger.info(
+            "正在开启弱网 DROP"
+        )
+
         _root_mode, uid = (
             self.ensure_ready()
         )
@@ -187,10 +205,19 @@ class NetworkController:
             config.NETWORK_APPLY_DELAY
         )
 
+        logger.info(
+            "弱网 DROP 已开启：UID=%s",
+            uid,
+        )
+
     def disable_weak_network(
         self,
     ) -> None:
         """关闭 DROP 弱网。"""
+        logger.info(
+            "正在关闭弱网 DROP"
+        )
+
         _root_mode, uid = (
             self.ensure_ready()
         )
@@ -215,6 +242,11 @@ class NetworkController:
 
         self.adb.delay(
             config.NETWORK_APPLY_DELAY
+        )
+
+        logger.info(
+            "弱网 DROP 已关闭：UID=%s",
+            uid,
         )
 
     # =========================================================
@@ -225,6 +257,10 @@ class NetworkController:
         self,
     ) -> None:
         """开启 REJECT 断网。"""
+        logger.info(
+            "正在开启断网 REJECT"
+        )
+
         _root_mode, uid = (
             self.ensure_ready()
         )
@@ -251,10 +287,19 @@ class NetworkController:
             config.NETWORK_APPLY_DELAY
         )
 
+        logger.info(
+            "断网 REJECT 已开启：UID=%s",
+            uid,
+        )
+
     def disable_reject_network(
         self,
     ) -> None:
         """关闭 REJECT 断网。"""
+        logger.info(
+            "正在关闭断网 REJECT"
+        )
+
         _root_mode, uid = (
             self.ensure_ready()
         )
@@ -281,6 +326,11 @@ class NetworkController:
             config.NETWORK_APPLY_DELAY
         )
 
+        logger.info(
+            "断网 REJECT 已关闭：UID=%s",
+            uid,
+        )
+
     # =========================================================
     # 恢复与状态
     # =========================================================
@@ -289,6 +339,10 @@ class NetworkController:
         self,
     ) -> None:
         """清理 DROP 与 REJECT。"""
+        logger.info(
+            "正在恢复游戏网络"
+        )
+
         _root_mode, uid = (
             self.ensure_ready()
         )
@@ -316,6 +370,11 @@ class NetworkController:
 
         self.adb.delay(
             config.NETWORK_APPLY_DELAY
+        )
+
+        logger.info(
+            "游戏网络已恢复：UID=%s",
+            uid,
         )
 
     def get_state(
@@ -363,13 +422,21 @@ class NetworkController:
             weak_ipv6 = None
             reject_ipv6 = None
 
-        return NetworkState(
+        state = NetworkState(
             uid=uid,
             weak_ipv4=weak_ipv4,
             weak_ipv6=weak_ipv6,
             reject_ipv4=reject_ipv4,
             reject_ipv6=reject_ipv6,
         )
+
+        logger.debug(
+            "网络状态：弱网=%s，断网=%s",
+            state.weak_enabled,
+            state.reject_enabled,
+        )
+
+        return state
 
     # =========================================================
     # 内部方法
@@ -412,6 +479,11 @@ class NetworkController:
 
         self._ip6tables_available = (
             result.returncode == 0
+        )
+
+        logger.debug(
+            "ip6tables 可用：%s",
+            self._ip6tables_available,
         )
 
         return (
@@ -476,6 +548,15 @@ class NetworkController:
                 "未知网络规则类型："
                 f"{mode}"
             )
+
+        logger.debug(
+            "应用网络规则：command=%s，chain=%s，uid=%s，mode=%s，enabled=%s",
+            command,
+            chain,
+            uid,
+            mode,
+            enabled,
+        )
 
         self.adb.run_privileged(
             script,

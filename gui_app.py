@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import queue
 import threading
 import tkinter as tk
 
@@ -23,6 +25,43 @@ from flows import (
     run_screenshot_check,
 )
 
+from logger import (
+    GuiLogFormatter,
+    attach_log_handler,
+    detach_log_handler,
+    get_logger,
+)
+
+
+logger = get_logger(__name__)
+
+
+class QueueLogHandler(logging.Handler):
+    """把日志放进队列，由 Tkinter 主线程读取。"""
+
+    def __init__(
+        self,
+        log_queue: queue.Queue[str],
+    ) -> None:
+        super().__init__()
+
+        self.log_queue = log_queue
+        self.setFormatter(
+            GuiLogFormatter()
+        )
+
+    def emit(
+        self,
+        record: logging.LogRecord,
+    ) -> None:
+        try:
+            self.log_queue.put(
+                self.format(record)
+            )
+
+        except Exception:
+            self.handleError(record)
+
 
 class App(tk.Tk):
     """当前阶段的轻量控制界面。"""
@@ -43,6 +82,18 @@ class App(tk.Tk):
         self.minsize(
             760,
             440,
+        )
+
+        self._log_queue: queue.Queue[str] = (
+            queue.Queue()
+        )
+
+        self._log_handler = QueueLogHandler(
+            self._log_queue
+        )
+
+        attach_log_handler(
+            self._log_handler
         )
 
         self.adb = AdbController()
@@ -76,9 +127,18 @@ class App(tk.Tk):
 
         self._build_ui()
 
+        self.after(
+            100,
+            self._drain_logs,
+        )
+
         self.protocol(
             "WM_DELETE_WINDOW",
             self.on_close,
+        )
+
+        logger.info(
+            "GUI 已启动"
         )
 
     def _build_ui(
@@ -549,6 +609,11 @@ class App(tk.Tk):
                 str(path)
             )
 
+            logger.info(
+                "打开截图目录：%s",
+                path,
+            )
+
         except Exception as exc:
             self._show_error(
                 exc
@@ -603,8 +668,19 @@ class App(tk.Tk):
         self,
         message: str,
     ) -> None:
-        self._write_log(
-            message
+        if message.startswith(
+            "退出清理失败"
+        ):
+            logger.error(
+                message
+            )
+        else:
+            logger.info(
+                message
+            )
+
+        detach_log_handler(
+            self._log_handler
         )
 
         self.destroy()
@@ -682,8 +758,9 @@ class App(tk.Tk):
             "操作失败"
         )
 
-        self._write_log(
-            f"错误：{message}"
+        logger.error(
+            "操作失败：%s",
+            message,
         )
 
         messagebox.showerror(
@@ -695,14 +772,39 @@ class App(tk.Tk):
         self,
         message: str,
     ) -> None:
-        self.log_text.insert(
-            tk.END,
-            message + "\n",
+        logger.info(
+            "%s",
+            message,
         )
 
-        self.log_text.see(
-            tk.END
-        )
+    def _drain_logs(
+        self,
+    ) -> None:
+        """把后台日志安全写入 Tkinter 文本框。"""
+        while True:
+            try:
+                message = (
+                    self._log_queue
+                    .get_nowait()
+                )
+
+            except queue.Empty:
+                break
+
+            self.log_text.insert(
+                tk.END,
+                message + "\n",
+            )
+
+            self.log_text.see(
+                tk.END
+            )
+
+        if self.winfo_exists():
+            self.after(
+                100,
+                self._drain_logs,
+            )
 
 
 def main() -> None:

@@ -11,6 +11,10 @@ import cv2
 import numpy as np
 
 import config
+from logger import get_logger
+
+
+logger = get_logger(__name__)
 
 
 class AdbCommandError(RuntimeError):
@@ -69,6 +73,12 @@ class AdbController:
             int,
         ] = {}
 
+        logger.debug(
+            "ADB 控制器创建：serial=%s，adb=%s",
+            self.serial,
+            self.adb_path,
+        )
+
     @staticmethod
     def _find_adb(
         adb_path: str | Path | None,
@@ -98,16 +108,30 @@ class AdbController:
             )
 
             if candidate.is_file():
-                return candidate.resolve()
+                resolved = candidate.resolve()
+
+                logger.debug(
+                    "找到 adb.exe：%s",
+                    resolved,
+                )
+
+                return resolved
 
         path_result = shutil.which(
             "adb"
         )
 
         if path_result:
-            return Path(
+            resolved = Path(
                 path_result
             ).resolve()
+
+            logger.debug(
+                "从 PATH 找到 adb.exe：%s",
+                resolved,
+            )
+
+            return resolved
 
         checked_paths = ", ".join(
             str(path)
@@ -160,6 +184,11 @@ class AdbController:
             device=device,
         )
 
+        logger.debug(
+            "执行 ADB：%s",
+            " ".join(command),
+        )
+
         try:
             result = subprocess.run(
                 command,
@@ -176,6 +205,11 @@ class AdbController:
                 "ADB 命令超时："
                 f"{' '.join(command)}"
             ) from exc
+
+        logger.debug(
+            "ADB 返回码：%s",
+            result.returncode,
+        )
 
         if (
             check
@@ -221,6 +255,11 @@ class AdbController:
                 state = parts[1]
 
                 devices[serial] = state
+
+        logger.debug(
+            "ADB 设备列表：%s",
+            devices,
+        )
 
         return devices
 
@@ -298,6 +337,10 @@ class AdbController:
             self._root_shell_ready = True
             self._su_fallback = False
 
+            logger.info(
+                "ROOT 已就绪：adb-root"
+            )
+
             return "adb-root"
 
         # 尝试 adb root。
@@ -318,12 +361,20 @@ class AdbController:
             self._root_shell_ready = True
             self._su_fallback = False
 
+            logger.info(
+                "ROOT 已就绪：adb-root"
+            )
+
             return "adb-root"
 
         # adb root 不可用时尝试 su -c。
         if self._is_su_available():
             self._root_shell_ready = True
             self._su_fallback = True
+
+            logger.info(
+                "ROOT 已就绪：su-c"
+            )
 
             return "su-c"
 
@@ -345,6 +396,11 @@ class AdbController:
             )
 
         self.ensure_root_shell()
+
+        logger.debug(
+            "执行 ROOT shell：%s",
+            script,
+        )
 
         quoted_script = (
             self._quote_shell_arg(
@@ -394,6 +450,12 @@ class AdbController:
         )
 
         if cached is not None:
+            logger.debug(
+                "使用缓存 UID：%s -> %s",
+                package_name,
+                cached,
+            )
+
             return cached
 
         result = self.run(
@@ -428,6 +490,12 @@ class AdbController:
         self._package_uid_cache[
             package_name
         ] = uid
+
+        logger.info(
+            "获取游戏 UID：%s -> %s",
+            package_name,
+            uid,
+        )
 
         return uid
 
@@ -529,6 +597,11 @@ class AdbController:
             device=True,
         )
 
+        logger.debug(
+            "保存模拟器截图：%s",
+            path,
+        )
+
         try:
             result = subprocess.run(
                 command,
@@ -576,7 +649,14 @@ class AdbController:
                 f"{path}"
             )
 
-        return path.resolve()
+        resolved = path.resolve()
+
+        logger.debug(
+            "截图保存完成：%s",
+            resolved,
+        )
+
+        return resolved
 
     def read_screenshot(
         self,
@@ -706,6 +786,12 @@ class AdbController:
         y: int,
     ) -> None:
         """点击指定坐标。"""
+        logger.debug(
+            "ADB 点击：(%s, %s)",
+            x,
+            y,
+        )
+
         self.run(
             [
                 "shell",
@@ -725,6 +811,15 @@ class AdbController:
         duration_ms: int = 300,
     ) -> None:
         """从一个坐标滑动到另一个坐标。"""
+        logger.debug(
+            "ADB 滑动：(%s, %s) -> (%s, %s)，%sms",
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            duration_ms,
+        )
+
         self.run(
             [
                 "shell",
@@ -787,6 +882,11 @@ class AdbController:
                 "游戏包名不能为空"
             )
 
+        logger.debug(
+            "启动应用：%s",
+            package_name,
+        )
+
         args = [
             "shell",
             "monkey",
@@ -826,6 +926,11 @@ class AdbController:
             raise ValueError(
                 "游戏包名不能为空"
             )
+
+        logger.debug(
+            "关闭应用：%s",
+            package_name,
+        )
 
         self.run(
             [

@@ -23,6 +23,15 @@ RESOURCE_DIR = PROJECT_ROOT / "resources"
 TEMPLATE_DIR = RESOURCE_DIR / "templates"
 SCREENSHOT_DIR = RESOURCE_DIR / "screenshots"
 
+# 运行文件。
+RUNTIME_DIR = PROJECT_ROOT / "runtime"
+LOG_DIR = RUNTIME_DIR / "logs"
+LOG_FILE = LOG_DIR / "boom_beach_sonar_robot.log"
+LOG_LEVEL = os.getenv(
+    "LOG_LEVEL",
+    "INFO",
+).upper()
+
 DEFAULT_SCREENSHOT_NAME = "latest.png"
 
 ADB_COMMAND_TIMEOUT = 15.0
@@ -51,6 +60,11 @@ def ensure_directories() -> None:
     )
 
     SCREENSHOT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    LOG_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
