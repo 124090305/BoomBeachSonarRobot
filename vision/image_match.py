@@ -58,16 +58,17 @@ def read_image(
     return image
 
 
-def find_template(
+def find_template_with_score(
     screenshot: np.ndarray,
     template: str | Path | np.ndarray,
     threshold: float = config.DEFAULT_MATCH_THRESHOLD,
-) -> MatchResult | None:
+) -> tuple[MatchResult | None, float]:
     """
-    在截图中查找模板。
+    在截图中查找模板，同时返回本次最高相似度。
 
-    找到并达到相似度要求时返回 MatchResult。
-    没有找到时返回 None。
+    达到阈值时返回 MatchResult。
+    没达到阈值时返回 None。
+    第二个返回值始终是本次匹配的最高相似度。
     """
     if (
         not isinstance(screenshot, np.ndarray)
@@ -124,16 +125,40 @@ def find_template(
         max_location,
     ) = cv2.minMaxLoc(match_data)
 
-    if max_score < threshold:
-        return None
+    best_score = float(max_score)
+
+    if best_score < threshold:
+        return None, best_score
 
     x, y = max_location
 
-    return MatchResult(
-        score=float(max_score),
+    match = MatchResult(
+        score=best_score,
         top_left=(x, y),
         bottom_right=(
             x + template_width,
             y + template_height,
         ),
     )
+
+    return match, best_score
+
+
+def find_template(
+    screenshot: np.ndarray,
+    template: str | Path | np.ndarray,
+    threshold: float = config.DEFAULT_MATCH_THRESHOLD,
+) -> MatchResult | None:
+    """
+    在截图中查找模板。
+
+    找到并达到相似度要求时返回 MatchResult。
+    没有找到时返回 None。
+    """
+    match, _best_score = find_template_with_score(
+        screenshot,
+        template,
+        threshold=threshold,
+    )
+
+    return match

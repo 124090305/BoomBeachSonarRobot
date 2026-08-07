@@ -6,7 +6,10 @@ from pathlib import Path
 import config
 from controllers.adb_controller import AdbController
 from logger import get_logger
-from vision.image_match import MatchResult, find_template
+from vision.image_match import (
+    MatchResult,
+    find_template_with_score,
+)
 
 
 logger = get_logger(__name__)
@@ -83,16 +86,17 @@ class PageController:
         template = self._resolve_template_path(template_path)
         screenshot = self.adb.read_screenshot()
 
-        match = find_template(
+        match, best_score = find_template_with_score(
             screenshot,
             template,
             threshold=threshold,
         )
 
         if match is None:
-            logger.debug(
-                "未找到模板：%s，阈值=%.3f",
+            logger.info(
+                "未找到模板：%s，最高相似度=%.3f，阈值=%.3f",
                 template.name,
+                best_score,
                 threshold,
             )
         else:
@@ -139,6 +143,7 @@ class PageController:
         template = self._resolve_template_path(template_path)
         deadline = time.monotonic() + timeout
         attempts = 0
+        best_score_seen = 0.0
 
         logger.info(
             "开始等待模板：%s，超时=%.1f秒，阈值=%.3f",
@@ -152,10 +157,15 @@ class PageController:
 
             screenshot = self.adb.read_screenshot()
 
-            match = find_template(
+            match, best_score = find_template_with_score(
                 screenshot,
                 template,
                 threshold=threshold,
+            )
+
+            best_score_seen = max(
+                best_score_seen,
+                best_score,
             )
 
             if match is not None:
@@ -173,18 +183,22 @@ class PageController:
 
             if remaining <= 0:
                 logger.warning(
-                    "等待模板超时：%s，%.1f秒内未出现，检测次数=%s",
+                    "等待模板超时：%s，%.1f秒内未出现，最高相似度=%.3f，阈值=%.3f，检测次数=%s",
                     template.name,
                     timeout,
+                    best_score_seen,
+                    threshold,
                     attempts,
                 )
 
                 return None
 
             logger.debug(
-                "等待模板中：%s，第%s次未命中",
+                "等待模板中：%s，第%s次未命中，本次最高相似度=%.3f，累计最高相似度=%.3f",
                 template.name,
                 attempts,
+                best_score,
+                best_score_seen,
             )
 
             self.adb.delay(

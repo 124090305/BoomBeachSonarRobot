@@ -1,6 +1,7 @@
 from .image_match import (
     MatchResult,
     find_template,
+    find_template_with_score,
     read_image,
 )
 from .ocr_helper import (
@@ -12,6 +13,7 @@ from .ocr_helper import (
 __all__ = [
     "MatchResult",
     "find_template",
+    "find_template_with_score",
     "read_image",
     "OCRResult",
     "read_number",
