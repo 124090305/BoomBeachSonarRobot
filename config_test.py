@@ -22,12 +22,56 @@ TEST_HUNT_PARITY = 0
 TEST_USE_SAFETY_RULE = True
 
 # =========================================================
+# 初始进入活动 + 页面状态检验
+# =========================================================
+
+# 主岛活动按钮。
+TEST_ACTIVITY_BUTTON_TEMPLATE = "activity_button.png"
+
+# 声纳浮标“参加”图标 / 文字。
+# 这两个模板需要从参考项目 template/ 目录下载。
+TEST_SONAR_TEMPLATE = "sonar_join.png"
+TEST_SONAR_LABEL_TEMPLATE = "sonar_join_label.png"
+
+# 声纳位于动态水面上，参考项目使用较低阈值。
+TEST_SONAR_MATCH_THRESHOLD = 0.60
+
+# 主岛和声纳等待时间。
+TEST_HOME_READY_TIMEOUT = 45.0
+TEST_SONAR_WAIT_TIMEOUT = 60.0
+
+# 主岛上划：1280x720 下参考项目使用的中心上划。
+TEST_HOME_SWIPE_START = (
+    640,
+    500,
+)
+TEST_HOME_SWIPE_END = (
+    640,
+    200,
+)
+TEST_HOME_SWIPE_DURATION_MS = 800
+
+# 点击活动按钮进入活动列表后，上划两次露出声纳活动入口。
+TEST_ACTIVITY_LIST_SWIPE_START = (
+    1000,
+    660,
+)
+TEST_ACTIVITY_LIST_SWIPE_END = (
+    1000,
+    180,
+)
+TEST_ACTIVITY_LIST_SWIPE_DURATION_MS = 300
+TEST_ACTIVITY_LIST_SWIPE_COUNT = 2
+TEST_ACTIVITY_LIST_BEFORE_SWIPE_DELAY = 0.4
+TEST_ACTIVITY_LIST_SWIPE_INTERVAL = 0.2
+
+# 初次进入活动列表后开启弱网，给规则一点生效时间。
+TEST_INITIAL_WEAK_APPLY_DELAY = 0.2
+
+# =========================================================
 # 单发真实探测测试
 # =========================================================
 
-# 参考项目退出活动后重新进入时，会先等待并点击主岛活动按钮，
-# 然后点击活动列表右下角的进入按钮。
-TEST_ACTIVITY_BUTTON_TEMPLATE = "activity_button.png"
 TEST_QUIT_ACTIVITY_TEMPLATE = "quit_activity.png"
 
 # 1280x720 下参考项目使用的活动详情入口固定坐标。

@@ -1,22 +1,38 @@
 from .sonar_flow import (
+    ActivityEntryResult,
     ManualProbeContext,
     ManualProbeResult,
     ScreenshotCheckResult,
+    SonarPageState,
+    detect_sonar_page_state,
+    dismiss_activity_start_hint,
+    enter_activity_initial,
     prepare_manual_probe_once,
     reenter_activity_for_probe,
     run_screenshot_check,
     submit_manual_probe_result,
+    swipe_home_up,
     wait_activity_detail_ready,
+    wait_home_island_ready,
+    wait_sonar_ready,
 )
 
 
 __all__ = [
+    "ActivityEntryResult",
     "ManualProbeContext",
     "ManualProbeResult",
     "ScreenshotCheckResult",
+    "SonarPageState",
+    "detect_sonar_page_state",
+    "dismiss_activity_start_hint",
+    "enter_activity_initial",
     "prepare_manual_probe_once",
     "reenter_activity_for_probe",
     "run_screenshot_check",
     "submit_manual_probe_result",
+    "swipe_home_up",
     "wait_activity_detail_ready",
+    "wait_home_island_ready",
+    "wait_sonar_ready",
 ]
