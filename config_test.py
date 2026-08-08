@@ -13,6 +13,14 @@ TEST_BOARD_QUAD = (
     (259, 288),   # left
 )
 
+# 第一版选格策略。
+# 0 -> 优先遍历 (row + col) % 2 == 0 的棋盘颜色。
+# 1 -> 优先遍历另一种颜色。
+TEST_HUNT_PARITY = 0
+
+# 当前按“潜艇周围一圈不会出现其他潜艇”的规则排除格子。
+TEST_USE_SAFETY_RULE = True
+
 # GUI 临时显示参数。
 TEST_BOARD_VIEW_WIDTH = 620
 TEST_BOARD_VIEW_HEIGHT = 300

@@ -7,6 +7,16 @@ from .board import (
     SonarBoard,
 )
 
+from .strategy import (
+    ConfirmedShip,
+    SonarStrategy,
+)
+
+from .checkerboard_strategy import (
+    CheckerboardHuntStrategy,
+)
+
+
 __all__ = [
     "BoardSnapshot",
     "Cell",
@@ -14,4 +24,7 @@ __all__ = [
     "Point",
     "Quad",
     "SonarBoard",
+    "ConfirmedShip",
+    "SonarStrategy",
+    "CheckerboardHuntStrategy",
 ]
