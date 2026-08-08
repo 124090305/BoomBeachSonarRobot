@@ -10,6 +10,7 @@ from .board import (
 from .strategy import (
     ConfirmedShip,
     SonarStrategy,
+    StrategySnapshot,
 )
 
 from .checkerboard_strategy import (
@@ -26,5 +27,6 @@ __all__ = [
     "SonarBoard",
     "ConfirmedShip",
     "SonarStrategy",
+    "StrategySnapshot",
     "CheckerboardHuntStrategy",
 ]

@@ -34,7 +34,7 @@ from logger import (
 )
 
 from sonar import (
-    CellState,
+    CheckerboardHuntStrategy,
     SonarBoard,
 )
 
@@ -131,6 +131,18 @@ class App(tk.Tk):
             self.sonar_board.set_screen_quad(
                 config_test.TEST_BOARD_QUAD
             )
+
+        # 选格策略和棋盘使用同一个 SonarBoard。
+        # UI 只读取 strategy.snapshot()，后续切换概率策略时，
+        # 这里替换策略对象即可继续复用棋盘显示层。
+        self.sonar_strategy = CheckerboardHuntStrategy(
+            self.sonar_board,
+            hunt_parity=config_test.TEST_HUNT_PARITY,
+            use_safety_rule=config_test.TEST_USE_SAFETY_RULE,
+        )
+
+        # GUI 启动后先准备第一格，让棋盘立即显示“下一步选择”。
+        self.sonar_strategy.choose_next_cell()
 
         self.status_var = (
             tk.StringVar(
@@ -366,7 +378,7 @@ class App(tk.Tk):
         # 声纳棋盘
         board_section = ttk.LabelFrame(
             container,
-            text="棋盘同步",
+            text="棋盘与策略同步",
             padding=10,
         )
 
@@ -398,8 +410,8 @@ class App(tk.Tk):
         ttk.Label(
             board_actions,
             text=(
-                "当前配置来自 config_test.py；"
-                "模拟器外角坐标填入后会自动生成 100 个点击中心"
+                "棋盘与当前选格策略同步；"
+                "灰色同时表示实际未命中和策略排除格"
             ),
         ).pack(
             side=tk.LEFT,
@@ -409,6 +421,7 @@ class App(tk.Tk):
         self.board_view = SonarBoardView(
             board_section,
             board=self.sonar_board,
+            strategy=self.sonar_strategy,
         )
 
         self.board_view.pack(
@@ -669,17 +682,23 @@ class App(tk.Tk):
         )
 
     # =========================================================
-    # 棋盘功能
+    # 棋盘与策略同步
     # =========================================================
 
     def reset_sonar_board(
         self,
     ) -> None:
-        """清空棋盘探测状态，保留坐标映射。"""
-        self.sonar_board.reset()
+        """重置棋盘和策略，并立即准备新一轮第一格。"""
+        self.sonar_strategy.reset()
+
+        next_cell = (
+            self.sonar_strategy
+            .choose_next_cell()
+        )
 
         self._write_log(
-            "声纳棋盘状态已重置"
+            "声纳棋盘和策略状态已重置；"
+            f"下一格={next_cell}"
         )
 
     def set_board_selected(
@@ -688,10 +707,10 @@ class App(tk.Tk):
         col: int,
     ) -> None:
         """
-        后续选格策略可以直接调用。
+        手动调试时直接高亮一个格子。
 
-        例：
-        self.set_board_selected(3, 5)
+        正式自动流程应优先调用：
+        self.sonar_strategy.choose_next_cell()
         """
         self.sonar_board.select_cell(
             row,
@@ -705,22 +724,97 @@ class App(tk.Tk):
         hit: bool,
     ) -> None:
         """
-        后续命中判断可以直接调用。
+        写入一次探测结果。
 
-        hit=True  -> GUI 显示命中
-        hit=False -> GUI 显示未命中
+        如果这个格子正是策略等待结果的格子，
+        会同步更新策略并立即准备下一格；
+        其他格子仍保留为手动棋盘调试入口。
         """
+        cell = (
+            int(row),
+            int(col),
+        )
+
+        if (
+            self.sonar_strategy.pending_cell
+            == cell
+        ):
+            self.report_strategy_result(
+                row=row,
+                col=col,
+                hit=hit,
+            )
+            return
+
         self.sonar_board.report_result(
             row,
             col,
             hit=hit,
         )
 
+    def report_strategy_result(
+        self,
+        row: int,
+        col: int,
+        hit: bool,
+    ) -> None:
+        """
+        正式策略流程使用的结果入口。
+
+        流程：
+        当前选择 -> 写 HIT/MISS -> 自动确认潜艇 -> 自动排除安全区
+        -> 立即选择并高亮下一格。
+        """
+        cell = (
+            int(row),
+            int(col),
+        )
+
+        newly_confirmed = (
+            self.sonar_strategy
+            .report_result(
+                cell,
+                hit=hit,
+            )
+        )
+
+        next_cell = (
+            self.sonar_strategy
+            .choose_next_cell()
+        )
+
+        result_text = (
+            "HIT"
+            if hit
+            else "MISS"
+        )
+
+        message = (
+            f"策略结果：{cell} -> {result_text}；"
+            f"下一格={next_cell}"
+        )
+
+        if newly_confirmed:
+            lengths = ",".join(
+                str(ship.length)
+                for ship in newly_confirmed
+            )
+
+            message += (
+                f"；新确认潜艇=[{lengths}]"
+            )
+
+        self._write_log(message)
+
     def set_board_sunk(
         self,
         cells: list[tuple[int, int]],
     ) -> None:
-        """后续策略确认完整潜艇后可以直接调用。"""
+        """
+        手动调试入口：直接把一组格子标记为已确认潜艇。
+
+        正式策略确认潜艇时会自动调用 SonarBoard.mark_sunk()。
+        """
         self.sonar_board.mark_sunk(
             cells
         )

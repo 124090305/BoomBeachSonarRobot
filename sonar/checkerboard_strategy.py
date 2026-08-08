@@ -85,6 +85,17 @@ class CheckerboardHuntStrategy(SonarStrategy):
         return frozenset(self._blocked_cells)
 
     @property
+    def mode(self) -> str:
+        """给 UI 显示当前处于巡航、追击还是完成状态。"""
+        if self.done:
+            return "DONE"
+
+        if self._get_hit_clusters():
+            return "TARGET"
+
+        return "HUNT"
+
+    @property
     def hunt_order(self) -> tuple[Cell, ...]:
         """第一种棋盘颜色的固定遍历顺序。"""
         return self._primary_hunt_cells
