@@ -99,6 +99,28 @@ TEST_ACTIVITY_TAP_TO_START_DELAY = 0.4
 TEST_ACTIVITY_TAP_TO_START_AFTER_DELAY = 0.5
 TEST_PROBE_AFTER_CLICK_DELAY = 0.3
 
+# =========================================================
+# 自动完整一发：识别 + REJECT + retry + 恢复
+# =========================================================
+
+TEST_RETRY_TEMPLATE = "retry.png"
+TEST_RETRY_WAIT_TIMEOUT = 20.0
+TEST_RETRY_MATCH_THRESHOLD = 0.85
+TEST_RETRY_BEFORE_CLICK_DELAY = 0.1
+TEST_RETRY_AFTER_CLICK_DELAY = 0.5
+
+# retry 等待超时时，保存等待期间相似度最高的那一帧。
+TEST_RETRY_FAILURE_DIR_NAME = "retry_failure"
+
+# 自动单发截图保存目录名。
+TEST_AUTO_PROBE_DIR_NAME = "auto_probe"
+
+# 当前 diamond_hit 参数沿用已经完成真实联调的第一版配置。
+TEST_DIAMOND_W = 80
+TEST_DIAMOND_H = 56
+TEST_DIAMOND_SEARCH_RADIUS = 14
+TEST_DIAMOND_DEBUG_DIR_NAME = "diamond_hit_debug"
+
 # GUI 临时显示参数。
 TEST_BOARD_VIEW_WIDTH = 620
 TEST_BOARD_VIEW_HEIGHT = 300
