@@ -42,7 +42,7 @@ class DiamondHitConfig:
     min_component_ratio: float = 0.026
     min_s_drop: float = 8.0
     min_edge_density: float = 0.014
-    hit_score_threshold: float = 0.7
+    hit_score_threshold: float = 0.85
 
     probe_offsets: tuple[tuple[int, int], ...] = (
         (0, 0),
@@ -247,6 +247,15 @@ def classify_diamond_hit(
         center_gray_ratio >= 0.28
         and changed_ratio >= config.min_changed_ratio
         and s_center <= config.max_metal_s
+    ):
+        is_hit = True
+
+    # 综合分兜底：
+    # 前后画面确实发生了足够变化，并且多个 HIT 特征综合分很高时，
+    # 不再让后面的 unopened 白色规则覆盖这次强 HIT。
+    elif (
+        changed_ratio >= config.min_changed_ratio
+        and score >= config.hit_score_threshold
     ):
         is_hit = True
 
