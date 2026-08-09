@@ -20,13 +20,9 @@ from controllers import (
     AdbController,
     GameController,
     NetworkController,
-    PageController,
 )
 
 from flows import (
-    AutoProbeLoopSummary,
-    AutoProbeOnceResult,
-    run_auto_probe_loop,
     run_screenshot_check,
 )
 
@@ -118,10 +114,6 @@ class App(tk.Tk):
             )
         )
 
-        self.page = PageController(
-            self.adb
-        )
-
         self.game = (
             GameController(
                 self.adb,
@@ -164,22 +156,6 @@ class App(tk.Tk):
             )
         )
 
-        self.auto_loop_state_var = tk.StringVar(
-            value="已停止"
-        )
-        self.auto_loop_total_var = tk.StringVar(
-            value="发数：0 | HIT：0 | MISS：0"
-        )
-        self.auto_loop_last_var = tk.StringVar(
-            value="上一发：-"
-        )
-
-        self._auto_loop_stop = threading.Event()
-        self._auto_loop_thread: threading.Thread | None = None
-        self._auto_loop_events: queue.Queue[tuple[str, object]] = (
-            queue.Queue()
-        )
-
         self._closing = False
 
         self._build_ui()
@@ -187,11 +163,6 @@ class App(tk.Tk):
         self.after(
             100,
             self._drain_logs,
-        )
-
-        self.after(
-            100,
-            self._drain_auto_loop_events,
         )
 
         self.protocol(
@@ -371,73 +342,11 @@ class App(tk.Tk):
             padx=4,
         )
 
-        # 自动连续循环控制
-        auto_loop_section = ttk.LabelFrame(
-            container,
-            text="自动循环",
-            padding=8,
-        )
-        auto_loop_section.grid(
-            row=3,
-            column=0,
-            columnspan=3,
-            sticky=tk.EW,
-            pady=(0, 12),
-        )
-
-        self.auto_loop_start_button = ttk.Button(
-            auto_loop_section,
-            text="启动循环",
-            command=self.start_auto_loop,
-        )
-        self.auto_loop_start_button.pack(
-            side=tk.LEFT,
-            padx=(0, 6),
-        )
-
-        self.auto_loop_stop_button = ttk.Button(
-            auto_loop_section,
-            text="停止循环",
-            command=self.stop_auto_loop,
-        )
-        self.auto_loop_stop_button.pack(
-            side=tk.LEFT,
-            padx=(0, 12),
-        )
-        self.auto_loop_stop_button.state(["disabled"])
-
-        ttk.Label(
-            auto_loop_section,
-            text="状态：",
-        ).pack(
-            side=tk.LEFT,
-        )
-        ttk.Label(
-            auto_loop_section,
-            textvariable=self.auto_loop_state_var,
-        ).pack(
-            side=tk.LEFT,
-            padx=(4, 14),
-        )
-        ttk.Label(
-            auto_loop_section,
-            textvariable=self.auto_loop_total_var,
-        ).pack(
-            side=tk.LEFT,
-            padx=(0, 14),
-        )
-        ttk.Label(
-            auto_loop_section,
-            textvariable=self.auto_loop_last_var,
-        ).pack(
-            side=tk.LEFT,
-        )
-
         ttk.Label(
             container,
             text="状态：",
         ).grid(
-            row=4,
+            row=3,
             column=0,
             sticky=tk.NW,
         )
@@ -446,7 +355,7 @@ class App(tk.Tk):
             container,
             textvariable=self.status_var,
         ).grid(
-            row=4,
+            row=3,
             column=1,
             columnspan=2,
             sticky=tk.W,
@@ -459,7 +368,7 @@ class App(tk.Tk):
         )
 
         self.log_text.grid(
-            row=5,
+            row=4,
             column=0,
             columnspan=3,
             sticky=tk.NSEW,
@@ -474,7 +383,7 @@ class App(tk.Tk):
         )
 
         board_section.grid(
-            row=6,
+            row=5,
             column=0,
             columnspan=3,
             sticky=tk.NSEW,
@@ -526,12 +435,12 @@ class App(tk.Tk):
         )
 
         container.rowconfigure(
-            5,
+            4,
             weight=1,
         )
 
         container.rowconfigure(
-            6,
+            5,
             weight=2,
         )
 
@@ -543,13 +452,6 @@ class App(tk.Tk):
         self,
     ) -> None:
         """切换 ADB 设备。"""
-        if self._auto_loop_running():
-            messagebox.showwarning(
-                "自动循环运行中",
-                "请先停止自动循环，再切换 ADB 设备。",
-            )
-            return
-
         serial = (
             self.device_var.get()
             .strip()
@@ -574,10 +476,6 @@ class App(tk.Tk):
                 NetworkController(
                     self.adb
                 )
-            )
-
-            self.page = PageController(
-                self.adb
             )
 
             self.game = (
@@ -791,13 +689,6 @@ class App(tk.Tk):
         self,
     ) -> None:
         """重置棋盘和策略，并立即准备新一轮第一格。"""
-        if self._auto_loop_running():
-            messagebox.showwarning(
-                "自动循环运行中",
-                "请先停止自动循环，再重置棋盘。",
-            )
-            return
-
         self.sonar_strategy.reset()
 
         next_cell = (
@@ -929,174 +820,6 @@ class App(tk.Tk):
         )
 
     # =========================================================
-    # 自动连续循环
-    # =========================================================
-
-    def _auto_loop_running(self) -> bool:
-        thread = self._auto_loop_thread
-        return thread is not None and thread.is_alive()
-
-    def _set_auto_loop_running(self, running: bool) -> None:
-        if running:
-            self.auto_loop_start_button.state(["disabled"])
-            self.auto_loop_stop_button.state(["!disabled"])
-        else:
-            self.auto_loop_start_button.state(["!disabled"])
-            self.auto_loop_stop_button.state(["disabled"])
-
-    def start_auto_loop(self) -> None:
-        """从当前棋盘状态开始连续自动探测。"""
-        if self._auto_loop_running():
-            return
-
-        if self.sonar_strategy.done:
-            messagebox.showwarning(
-                "策略已经完成",
-                "当前棋盘策略已经完成。胜利处理尚未接入，请先重置棋盘再测试下一轮。",
-            )
-            return
-
-        self._auto_loop_stop.clear()
-        self.auto_loop_state_var.set("启动中")
-        self.auto_loop_total_var.set("发数：0 | HIT：0 | MISS：0")
-        self.auto_loop_last_var.set("上一发：-")
-        self.status_var.set("自动循环启动中...")
-        self._set_auto_loop_running(True)
-
-        self._write_log(
-            "自动循环启动：将连续执行完整单发闭环；停止按钮会在当前发完整结束后停止。"
-        )
-
-        self._auto_loop_thread = threading.Thread(
-            target=self._auto_loop_worker,
-            name="auto-probe-loop",
-            daemon=True,
-        )
-        self._auto_loop_thread.start()
-
-    def stop_auto_loop(self) -> None:
-        """请求连续循环在当前发完整结束后停止。"""
-        if not self._auto_loop_running():
-            return
-
-        self._auto_loop_stop.set()
-        self.auto_loop_state_var.set("停止中")
-        self.status_var.set("已请求停止：等待当前发完整结束...")
-        self._write_log(
-            "已请求停止自动循环：当前发会完整走完网络恢复链后停止。"
-        )
-
-    def _auto_loop_worker(self) -> None:
-        """后台线程中的连续自动循环。"""
-        try:
-            summary = run_auto_probe_loop(
-                adb=self.adb,
-                page=self.page,
-                network=self.network,
-                board=self.sonar_board,
-                strategy=self.sonar_strategy,
-                stop_event=self._auto_loop_stop,
-                on_round=self._queue_auto_loop_round,
-            )
-
-            # 正常停止或策略完成后，UI 停止态统一恢复正常网络。
-            self.network.restore_network()
-
-        except Exception as exc:
-            # 异常路径保留单发流程自己的网络安全状态，
-            # 不在这里强制释放弱网，方便排查真实失败现场。
-            self._auto_loop_events.put(("error", exc))
-            return
-
-        self._auto_loop_events.put(("summary", summary))
-
-    def _queue_auto_loop_round(
-        self,
-        index: int,
-        result: AutoProbeOnceResult,
-    ) -> None:
-        self._auto_loop_events.put(
-            ("round", (index, result))
-        )
-
-    def _drain_auto_loop_events(self) -> None:
-        """在 Tkinter 主线程中刷新循环状态。"""
-        while True:
-            try:
-                kind, payload = self._auto_loop_events.get_nowait()
-            except queue.Empty:
-                break
-
-            if kind == "round":
-                index, result = payload
-                result_text = "HIT" if result.hit else "MISS"
-
-                # 统计直接从当前循环日志结果累计。
-                current = self.auto_loop_total_var.get()
-                try:
-                    parts = current.replace("发数：", "").replace("HIT：", "").replace("MISS：", "").split(" | ")
-                    hits = int(parts[1])
-                    misses = int(parts[2])
-                except Exception:
-                    hits = 0
-                    misses = 0
-
-                if result.hit:
-                    hits += 1
-                else:
-                    misses += 1
-
-                self.auto_loop_total_var.set(
-                    f"发数：{index} | HIT：{hits} | MISS：{misses}"
-                )
-                self.auto_loop_last_var.set(
-                    f"上一发：{result.context.cell} {result_text} | 下一格：{result.next_cell}"
-                )
-                self.auto_loop_state_var.set("运行中")
-                self.status_var.set(
-                    f"自动循环运行中：第 {index} 发完成"
-                )
-                continue
-
-            if kind == "summary":
-                summary = payload
-                self._auto_loop_thread = None
-                self._set_auto_loop_running(False)
-
-                self.auto_loop_total_var.set(
-                    f"发数：{summary.rounds} | HIT：{summary.hits} | MISS：{summary.misses}"
-                )
-
-                if summary.strategy_done:
-                    state_text = "策略完成，等待胜利处理"
-                elif summary.stop_reason == "requested":
-                    state_text = "已停止"
-                else:
-                    state_text = f"已停止：{summary.stop_reason}"
-
-                self.auto_loop_state_var.set(state_text)
-                self.status_var.set(state_text)
-                self._write_log(
-                    "自动循环结束："
-                    f"rounds={summary.rounds}，HIT={summary.hits}，MISS={summary.misses}，"
-                    f"reason={summary.stop_reason}；游戏网络已恢复正常。"
-                )
-                continue
-
-            if kind == "error":
-                self._auto_loop_thread = None
-                self._set_auto_loop_running(False)
-                self.auto_loop_state_var.set("错误")
-                self.status_var.set("自动循环异常停止")
-                self._show_error(payload)
-
-        if self.winfo_exists():
-            self.after(
-                100,
-                self._drain_auto_loop_events,
-            )
-
-    # =========================================================
     # 其他 GUI 功能
     # =========================================================
 
@@ -1134,7 +857,6 @@ class App(tk.Tk):
             return
 
         self._closing = True
-        self._auto_loop_stop.set()
 
         self.status_var.set(
             "正在恢复网络并退出..."
@@ -1146,14 +868,6 @@ class App(tk.Tk):
 
         def worker() -> None:
             try:
-                loop_thread = self._auto_loop_thread
-                if loop_thread is not None and loop_thread.is_alive():
-                    loop_thread.join(timeout=65.0)
-                    if loop_thread.is_alive():
-                        logger.warning(
-                            "关闭窗口时自动循环仍未结束，将继续执行退出网络清理"
-                        )
-
                 self.network.restore_network()
 
             except Exception as exc:

@@ -426,57 +426,6 @@ def recover_after_hit_once(
     return result
 
 
-def _recover_after_strategy_done_once(
-    adb: AdbController,
-    page: PageController,
-    network: NetworkController,
-    *,
-    hit: bool,
-) -> ProbeRecoveryResult:
-    """
-    策略已经确认全部潜艇时，只把本发结果正常提交到服务器。
-
-    当前阶段还没有胜利页面处理，所以这里不会再尝试回到活动详情页。
-    HIT 时恢复正常网络并等待现有的 5 秒，让最后一发正常结算；
-    然后保持正常联网，把页面留给后续胜利处理功能。
-    """
-    logger.info(
-        "策略已确认全部潜艇：进入胜利处理边界，停止重新弱网和重进活动"
-    )
-
-    network.restore_network()
-
-    if hit:
-        online_wait = float(
-            config_test.TEST_HIT_ONLINE_WAIT_SECONDS
-        )
-        logger.info(
-            "最后一发 HIT 已恢复正常联网，等待 %.1f 秒完成结算",
-            online_wait,
-        )
-        adb.delay(online_wait)
-
-    final_network = network.get_state()
-    final_state = detect_sonar_page_state(page)
-
-    result = ProbeRecoveryResult(
-        mode="strategy_done_online",
-        retry_found=None,
-        final_state=final_state,
-        weak_network_enabled=final_network.weak_enabled,
-        reject_network_enabled=final_network.reject_enabled,
-    )
-
-    logger.info(
-        "策略完成后的临时收尾完成：page=%s，weak=%s，reject=%s",
-        result.final_state.value,
-        result.weak_network_enabled,
-        result.reject_network_enabled,
-    )
-
-    return result
-
-
 def recover_after_probe_once(
     adb: AdbController,
     page: PageController,
@@ -769,14 +718,7 @@ def run_auto_probe_once(
             ],
         )
 
-    if strategy.done:
-        recovery = _recover_after_strategy_done_once(
-            adb=adb,
-            page=page,
-            network=network,
-            hit=hit,
-        )
-    elif hit:
+    if hit:
         recovery = recover_after_hit_once(
             adb=adb,
             page=page,

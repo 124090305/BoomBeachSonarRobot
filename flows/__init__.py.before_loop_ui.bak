@@ -8,10 +8,6 @@ from .auto_probe_flow import (
     recover_after_probe_once,
     run_auto_probe_once,
 )
-from .auto_probe_loop import (
-    AutoProbeLoopSummary,
-    run_auto_probe_loop,
-)
 from .sonar_flow import (
     ActivityEntryResult,
     ManualProbeContext,
@@ -35,14 +31,12 @@ from .sonar_flow import (
 __all__ = [
     "AutoProbeOnceResult",
     "ProbeRecoveryResult",
-    "AutoProbeLoopSummary",
     "build_test_hit_config",
     "ensure_auto_probe_ready",
     "recognition_state_is_hit",
     "recover_after_hit_once",
     "recover_after_probe_once",
     "run_auto_probe_once",
-    "run_auto_probe_loop",
     "ActivityEntryResult",
     "ManualProbeContext",
     "ManualProbeResult",
