@@ -50,7 +50,8 @@ logger = get_logger(__name__)
 class ProbeRecoveryResult:
     """一次探测结束后的网络与页面恢复结果。"""
 
-    retry_found: bool
+    mode: str
+    retry_found: bool | None
     final_state: SonarPageState
     weak_network_enabled: bool
     reject_network_enabled: bool
@@ -322,6 +323,109 @@ def wait_retry_with_failure_capture(
         )
 
 
+def recover_after_hit_once(
+    adb: AdbController,
+    page: PageController,
+    network: NetworkController,
+) -> ProbeRecoveryResult:
+    """
+    HIT 后直接联网 5 秒，再恢复到下一发弱网准备状态。
+
+    流程：
+    确认当前仍是弱网
+    -> 直接恢复正常联网
+    -> 等待 5 秒，让本次命中正常提交
+    -> 检查 / 恢复活动详情页
+    -> 再开启弱网 DROP
+    -> 检查下一发准备状态
+
+    HIT 分支不会开启 REJECT，也不会等待或点击 retry。
+    """
+    logger.info(
+        "检测到 HIT：跳过 REJECT/retry，直接恢复正常联网"
+    )
+
+    state = network.get_state()
+
+    if state.reject_enabled:
+        raise RuntimeError(
+            "HIT 恢复前 REJECT 已经开启，当前网络状态异常"
+        )
+
+    if not state.weak_enabled:
+        raise RuntimeError(
+            "HIT 恢复前弱网 DROP 没有开启"
+        )
+
+    # 清掉 DROP / REJECT，立即恢复正常联网。
+    network.restore_network()
+
+    online_wait = float(
+        config_test.TEST_HIT_ONLINE_WAIT_SECONDS
+    )
+
+    logger.info(
+        "HIT 已恢复正常联网，等待 %.1f 秒让结果稳定",
+        online_wait,
+    )
+
+    adb.delay(online_wait)
+
+    # 5 秒后统一整理到下一发可以开始的状态。
+    # 如果仍在活动详情页，会直接重新开启弱网；
+    # 如果页面已经回到主岛，会复用现有进入活动流程。
+    ensure_auto_probe_ready(
+        adb=adb,
+        page=page,
+        network=network,
+    )
+
+    final_network = network.get_state()
+    final_state = detect_sonar_page_state(
+        page
+    )
+
+    if (
+        final_state
+        != SonarPageState.ACTIVITY_DETAIL
+    ):
+        raise RuntimeError(
+            "HIT 恢复失败：5 秒联网后没有回到活动详情页"
+        )
+
+    if final_network.reject_enabled:
+        raise RuntimeError(
+            "HIT 恢复失败：REJECT 意外处于开启状态"
+        )
+
+    if not final_network.weak_enabled:
+        raise RuntimeError(
+            "HIT 恢复失败：弱网 DROP 没有重新开启"
+        )
+
+    result = ProbeRecoveryResult(
+        mode="hit_online_wait",
+        retry_found=None,
+        final_state=final_state,
+        weak_network_enabled=(
+            final_network.weak_enabled
+        ),
+        reject_network_enabled=(
+            final_network.reject_enabled
+        ),
+    )
+
+    logger.info(
+        "HIT 恢复完成：联网等待=%.1f秒，page=%s，weak=%s，reject=%s",
+        online_wait,
+        result.final_state.value,
+        result.weak_network_enabled,
+        result.reject_network_enabled,
+    )
+
+    return result
+
+
 def recover_after_probe_once(
     adb: AdbController,
     page: PageController,
@@ -455,6 +559,7 @@ def recover_after_probe_once(
         )
 
     result = ProbeRecoveryResult(
+        mode="miss_retry",
         retry_found=True,
         final_state=final_state,
         weak_network_enabled=(
@@ -500,6 +605,14 @@ def run_auto_probe_once(
     -> after 截图
     -> diamond_hit 自动判断
     -> 写回策略
+
+    HIT：
+    -> 直接恢复正常联网
+    -> 等待 5 秒
+    -> 恢复 / 确认活动详情页
+    -> 再开弱网
+
+    MISS：
     -> REJECT
     -> 等 retry
     -> 关闭 REJECT
@@ -507,7 +620,8 @@ def run_auto_probe_once(
     -> 关闭弱网
     -> 重进活动
     -> 再开弱网
-    -> 选择下一格
+
+    最后选择下一格。
 
     当前识别结果解释规则：
     state == "hit" -> HIT
@@ -604,11 +718,18 @@ def run_auto_probe_once(
             ],
         )
 
-    recovery = recover_after_probe_once(
-        adb=adb,
-        page=page,
-        network=network,
-    )
+    if hit:
+        recovery = recover_after_hit_once(
+            adb=adb,
+            page=page,
+            network=network,
+        )
+    else:
+        recovery = recover_after_probe_once(
+            adb=adb,
+            page=page,
+            network=network,
+        )
 
     next_cell = strategy.choose_next_cell()
 

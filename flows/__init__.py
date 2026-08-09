@@ -4,6 +4,7 @@ from .auto_probe_flow import (
     build_test_hit_config,
     ensure_auto_probe_ready,
     recognition_state_is_hit,
+    recover_after_hit_once,
     recover_after_probe_once,
     run_auto_probe_once,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "build_test_hit_config",
     "ensure_auto_probe_ready",
     "recognition_state_is_hit",
+    "recover_after_hit_once",
     "recover_after_probe_once",
     "run_auto_probe_once",
     "ActivityEntryResult",

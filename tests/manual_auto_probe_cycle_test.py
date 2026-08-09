@@ -64,8 +64,7 @@ def main() -> int:
     print("本测试会真实执行：")
     print(
         "页面准备 -> 弱网 -> 策略选格 -> 点击 -> 退出/重进 -> "
-        "自动 HIT/MISS -> 策略写回 -> REJECT -> retry -> "
-        "恢复网络 -> 重进活动 -> 再开弱网"
+        "自动 HIT/MISS -> 策略写回 -> 分支恢复 -> 下一发准备"
     )
     print()
     print("结束成功时应满足：")
@@ -75,6 +74,7 @@ def main() -> int:
     print("4. 策略已经给出下一格，或本轮策略已经完成。")
     print()
     print("识别规则：只有 state=hit 记 HIT，其余状态统一记 MISS。")
+    print("HIT：直接联网 5 秒后重新开启弱网；MISS：继续 REJECT/retry。")
     print()
 
     command = input(
@@ -170,6 +170,9 @@ def main() -> int:
 
     print()
     print("恢复链：")
+    print(
+        f"  mode={result.recovery.mode}"
+    )
     print(
         f"  retry_found={result.recovery.retry_found}"
     )

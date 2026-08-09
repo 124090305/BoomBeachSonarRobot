@@ -109,6 +109,9 @@ TEST_RETRY_MATCH_THRESHOLD = 0.85
 TEST_RETRY_BEFORE_CLICK_DELAY = 0.1
 TEST_RETRY_AFTER_CLICK_DELAY = 0.5
 
+# HIT 后直接恢复正常联网，等待服务器状态稳定，再重新开启弱网。
+TEST_HIT_ONLINE_WAIT_SECONDS = 5.0
+
 # retry 等待超时时，保存等待期间相似度最高的那一帧。
 TEST_RETRY_FAILURE_DIR_NAME = "retry_failure"
 
