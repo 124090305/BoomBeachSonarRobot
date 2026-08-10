@@ -10,7 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-import config_test
+from sonar_config import DEFAULT_LEVEL_CONFIG
 
 from controllers.adb_controller import AdbController
 from controllers.page_controller import PageController
@@ -21,9 +21,9 @@ from sonar import (
 
 
 def main() -> None:
-    if config_test.TEST_BOARD_QUAD is None:
+    if DEFAULT_LEVEL_CONFIG.board_quad is None:
         raise RuntimeError(
-            "config_test.TEST_BOARD_QUAD 还没有填写"
+            "DEFAULT_LEVEL_CONFIG.board_quad 还没有填写"
         )
 
     adb = AdbController()
@@ -32,17 +32,17 @@ def main() -> None:
     page = PageController(adb)
 
     board = SonarBoard(
-        n=config_test.TEST_GRID_SIZE,
-        submarines=config_test.TEST_SUBMARINES,
+        grid_size=DEFAULT_LEVEL_CONFIG.grid_size,
+        submarines=DEFAULT_LEVEL_CONFIG.submarines,
     )
     board.set_screen_quad(
-        config_test.TEST_BOARD_QUAD
+        DEFAULT_LEVEL_CONFIG.board_quad
     )
 
     strategy = CheckerboardHuntStrategy(
         board,
-        hunt_parity=config_test.TEST_HUNT_PARITY,
-        use_safety_rule=config_test.TEST_USE_SAFETY_RULE,
+        hunt_parity=DEFAULT_LEVEL_CONFIG.hunt_parity,
+        use_safety_rule=DEFAULT_LEVEL_CONFIG.use_safety_rule,
     )
 
     print("策略 + 棋盘映射 + ADB 点击人工联调")

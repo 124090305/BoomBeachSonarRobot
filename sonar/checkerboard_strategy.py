@@ -224,8 +224,8 @@ class CheckerboardHuntStrategy(SonarStrategy):
         """程序启动时一次性生成固定遍历表。"""
         return tuple(
             (row, col)
-            for row in range(self.board.n)
-            for col in range(self.board.n)
+            for row in range(self.board.grid_size)
+            for col in range(self.board.grid_size)
             if (row + col) % 2 == parity
         )
 
@@ -427,9 +427,9 @@ class CheckerboardHuntStrategy(SonarStrategy):
     ) -> Iterable[tuple[str, tuple[Cell, ...]]]:
         invalid = self._invalid_for_ship_cells()
 
-        for row in range(self.board.n):
+        for row in range(self.board.grid_size):
             for col_start in range(
-                self.board.n - length + 1
+                self.board.grid_size - length + 1
             ):
                 cells = tuple(
                     (row, col)
@@ -447,9 +447,9 @@ class CheckerboardHuntStrategy(SonarStrategy):
 
                 yield "H", cells
 
-        for col in range(self.board.n):
+        for col in range(self.board.grid_size):
             for row_start in range(
-                self.board.n - length + 1
+                self.board.grid_size - length + 1
             ):
                 cells = tuple(
                     (row, col)
@@ -474,8 +474,8 @@ class CheckerboardHuntStrategy(SonarStrategy):
 
         snapshot = self.board.snapshot()
 
-        for row in range(snapshot.n):
-            for col in range(snapshot.n):
+        for row in range(snapshot.grid_size):
+            for col in range(snapshot.grid_size):
                 if snapshot.states[row][col] in (
                     CellState.MISS,
                     CellState.SUNK,
@@ -567,8 +567,8 @@ class CheckerboardHuntStrategy(SonarStrategy):
         row, col = cell
 
         return (
-            0 <= row < self.board.n
-            and 0 <= col < self.board.n
+            0 <= row < self.board.grid_size
+            and 0 <= col < self.board.grid_size
         )
 
     def _is_selectable(
@@ -611,8 +611,8 @@ class CheckerboardHuntStrategy(SonarStrategy):
         snapshot = self.board.snapshot()
         hits = {
             (row, col)
-            for row in range(snapshot.n)
-            for col in range(snapshot.n)
+            for row in range(snapshot.grid_size)
+            for col in range(snapshot.grid_size)
             if snapshot.states[row][col]
             == CellState.HIT
         }

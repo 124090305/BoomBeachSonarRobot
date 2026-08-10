@@ -29,7 +29,7 @@ class BoardSnapshot:
     """给 GUI 读取的一份棋盘快照。"""
 
     revision: int
-    n: int
+    grid_size: int
     submarines: tuple[int, ...]
     states: tuple[tuple[CellState, ...], ...]
     screen_points: tuple[tuple[Point | None, ...], ...]
@@ -55,11 +55,11 @@ class SonarBoard:
 
     def __init__(
         self,
-        n: int,
+        grid_size: int,
         submarines: Iterable[int],
     ) -> None:
-        if n <= 0:
-            raise ValueError("棋盘尺寸 n 必须大于 0")
+        if grid_size <= 0:
+            raise ValueError("棋盘尺寸 grid_size 必须大于 0")
 
         submarine_tuple = tuple(int(length) for length in submarines)
 
@@ -69,23 +69,23 @@ class SonarBoard:
         if any(length <= 0 for length in submarine_tuple):
             raise ValueError("潜艇长度必须大于 0")
 
-        if any(length > n for length in submarine_tuple):
+        if any(length > grid_size for length in submarine_tuple):
             raise ValueError("潜艇长度不能大于棋盘尺寸")
 
-        self.n = int(n)
+        self.grid_size = int(grid_size)
         self.submarines = submarine_tuple
 
         self._lock = RLock()
         self._revision = 0
 
         self._states: list[list[CellState]] = [
-            [CellState.UNKNOWN for _ in range(self.n)]
-            for _ in range(self.n)
+            [CellState.UNKNOWN for _ in range(self.grid_size)]
+            for _ in range(self.grid_size)
         ]
 
         self._screen_points: list[list[Point | None]] = [
-            [None for _ in range(self.n)]
-            for _ in range(self.n)
+            [None for _ in range(self.grid_size)]
+            for _ in range(self.grid_size)
         ]
 
     # =========================================================
@@ -97,9 +97,9 @@ class SonarBoard:
         row: int,
         col: int,
     ) -> None:
-        if not (0 <= row < self.n and 0 <= col < self.n):
+        if not (0 <= row < self.grid_size and 0 <= col < self.grid_size):
             raise IndexError(
-                f"格子超出棋盘范围：row={row}, col={col}, n={self.n}"
+                f"格子超出棋盘范围：row={row}, col={col}, grid_size={self.grid_size}"
             )
 
     def _touch(self) -> None:
@@ -158,10 +158,15 @@ class SonarBoard:
         with self._lock:
             changed = False
 
-            for r in range(self.n):
-                for c in range(self.n):
-                    if self._states[r][c] == CellState.SELECTED:
-                        self._states[r][c] = CellState.UNKNOWN
+            for existing_row in range(self.grid_size):
+                for existing_col in range(self.grid_size):
+                    if (
+                        self._states[existing_row][existing_col]
+                        == CellState.SELECTED
+                    ):
+                        self._states[existing_row][existing_col] = (
+                            CellState.UNKNOWN
+                        )
                         changed = True
 
             if self._states[row][col] != CellState.SELECTED:
@@ -210,8 +215,8 @@ class SonarBoard:
         with self._lock:
             changed = False
 
-            for row in range(self.n):
-                for col in range(self.n):
+            for row in range(self.grid_size):
+                for col in range(self.grid_size):
                     if self._states[row][col] != CellState.UNKNOWN:
                         self._states[row][col] = CellState.UNKNOWN
                         changed = True
@@ -231,7 +236,7 @@ class SonarBoard:
         直接写入全部格子的模拟器点击中心。
 
         points 使用逐行顺序：
-        (0,0), (0,1), ... (0,n-1),
+        (0,0), (0,1), ... (0,grid_size-1),
         (1,0), ...
         """
         point_list = [
@@ -239,7 +244,7 @@ class SonarBoard:
             for x, y in points
         ]
 
-        expected = self.n * self.n
+        expected = self.grid_size * self.grid_size
 
         if len(point_list) != expected:
             raise ValueError(
@@ -249,8 +254,8 @@ class SonarBoard:
         with self._lock:
             index = 0
 
-            for row in range(self.n):
-                for col in range(self.n):
+            for row in range(self.grid_size):
+                for col in range(self.grid_size):
                     self._screen_points[row][col] = point_list[index]
                     index += 1
 
@@ -261,7 +266,7 @@ class SonarBoard:
         quad: Quad,
     ) -> None:
         """
-        根据模拟器棋盘四个外角，自动生成 n*n 个格子中心。
+        根据模拟器棋盘四个外角，自动生成 grid_size×grid_size 个格子中心。
 
         quad 顺序固定：
         上 -> 右 -> 下 -> 左
@@ -279,9 +284,9 @@ class SonarBoard:
         source = np.array(
             [
                 [0.0, 0.0],
-                [float(self.n), 0.0],
-                [float(self.n), float(self.n)],
-                [0.0, float(self.n)],
+                [float(self.grid_size), 0.0],
+                [float(self.grid_size), float(self.grid_size)],
+                [0.0, float(self.grid_size)],
             ],
             dtype=np.float32,
         )
@@ -295,8 +300,8 @@ class SonarBoard:
             [
                 [
                     [col + 0.5, row + 0.5]
-                    for row in range(self.n)
-                    for col in range(self.n)
+                    for row in range(self.grid_size)
+                    for col in range(self.grid_size)
                 ]
             ],
             dtype=np.float32,
@@ -325,8 +330,8 @@ class SonarBoard:
             if not has_mapping:
                 return
 
-            for row in range(self.n):
-                for col in range(self.n):
+            for row in range(self.grid_size):
+                for col in range(self.grid_size):
                     self._screen_points[row][col] = None
 
             self._touch()
@@ -367,18 +372,18 @@ class SonarBoard:
         col: int,
     ) -> int:
         self._validate_cell(row, col)
-        return row * self.n + col
+        return row * self.grid_size + col
 
     def cell_from_index(
         self,
         index: int,
     ) -> Cell:
-        if not (0 <= index < self.n * self.n):
+        if not (0 <= index < self.grid_size * self.grid_size):
             raise IndexError(
                 f"格子编号超出范围：index={index}"
             )
 
-        return divmod(index, self.n)
+        return divmod(index, self.grid_size)
 
     # =========================================================
     # GUI 快照
@@ -398,7 +403,7 @@ class SonarBoard:
 
             return BoardSnapshot(
                 revision=self._revision,
-                n=self.n,
+                grid_size=self.grid_size,
                 submarines=self.submarines,
                 states=states,
                 screen_points=screen_points,

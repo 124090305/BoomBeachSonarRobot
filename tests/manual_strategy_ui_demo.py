@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-import config_test
+from sonar_config import DEFAULT_LEVEL_CONFIG
 
 from sonar import (
     CheckerboardHuntStrategy,
@@ -46,19 +46,19 @@ class StrategyUiDemo(tk.Tk):
         self.geometry("900x620")
 
         self.board = SonarBoard(
-            n=config_test.TEST_GRID_SIZE,
-            submarines=config_test.TEST_SUBMARINES,
+            grid_size=DEFAULT_LEVEL_CONFIG.grid_size,
+            submarines=DEFAULT_LEVEL_CONFIG.submarines,
         )
 
-        if config_test.TEST_BOARD_QUAD is not None:
+        if DEFAULT_LEVEL_CONFIG.board_quad is not None:
             self.board.set_screen_quad(
-                config_test.TEST_BOARD_QUAD
+                DEFAULT_LEVEL_CONFIG.board_quad
             )
 
         self.strategy = CheckerboardHuntStrategy(
             self.board,
-            hunt_parity=config_test.TEST_HUNT_PARITY,
-            use_safety_rule=config_test.TEST_USE_SAFETY_RULE,
+            hunt_parity=DEFAULT_LEVEL_CONFIG.hunt_parity,
+            use_safety_rule=DEFAULT_LEVEL_CONFIG.use_safety_rule,
         )
 
         self.strategy.choose_next_cell()

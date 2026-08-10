@@ -4,8 +4,6 @@ from collections import deque
 import tkinter as tk
 from tkinter import ttk
 
-import config_test
-
 from sonar import (
     BoardSnapshot,
     Cell,
@@ -14,6 +12,7 @@ from sonar import (
     SonarStrategy,
     StrategySnapshot,
 )
+from sonar_config import GUI_CONFIG
 
 
 # =========================================================
@@ -88,7 +87,7 @@ class SonarBoardView(ttk.Frame):
         self._build_ui()
 
         self.after(
-            config_test.TEST_BOARD_REFRESH_MS,
+            GUI_CONFIG.board_refresh_ms,
             self._poll_board,
         )
 
@@ -136,8 +135,8 @@ class SonarBoardView(ttk.Frame):
 
         self.canvas = tk.Canvas(
             self,
-            width=config_test.TEST_BOARD_VIEW_WIDTH,
-            height=config_test.TEST_BOARD_VIEW_HEIGHT,
+            width=GUI_CONFIG.board_view_width,
+            height=GUI_CONFIG.board_view_height,
             highlightthickness=1,
             highlightbackground="#cbd5e1",
             background="#f8fafc",
@@ -222,7 +221,7 @@ class SonarBoardView(ttk.Frame):
             )
 
         self.after(
-            config_test.TEST_BOARD_REFRESH_MS,
+            GUI_CONFIG.board_refresh_ms,
             self._poll_board,
         )
 
@@ -270,10 +269,10 @@ class SonarBoardView(ttk.Frame):
             for length in board_snapshot.submarines
         )
 
-        total = board_snapshot.n * board_snapshot.n
+        total = board_snapshot.grid_size * board_snapshot.grid_size
 
         self.info_var.set(
-            f"{board_snapshot.n}×{board_snapshot.n} | "
+            f"{board_snapshot.grid_size}×{board_snapshot.grid_size} | "
             f"潜艇 [{submarine_text}] | "
             f"坐标映射 {board_snapshot.mapped_count}/{total}"
         )
@@ -360,14 +359,14 @@ class SonarBoardView(ttk.Frame):
 
         width = max(
             self.canvas.winfo_width(),
-            config_test.TEST_BOARD_VIEW_WIDTH,
+            GUI_CONFIG.board_view_width,
         )
         height = max(
             self.canvas.winfo_height(),
-            config_test.TEST_BOARD_VIEW_HEIGHT,
+            GUI_CONFIG.board_view_height,
         )
 
-        padding = config_test.TEST_BOARD_VIEW_PADDING
+        padding = GUI_CONFIG.board_view_padding
 
         usable_width = max(
             100,
@@ -379,17 +378,17 @@ class SonarBoardView(ttk.Frame):
         )
 
         cell_width = min(
-            usable_width / snapshot.n,
-            (usable_height * 2.0) / snapshot.n,
+            usable_width / snapshot.grid_size,
+            (usable_height * 2.0) / snapshot.grid_size,
         )
 
         cell_height = min(
             cell_width * 0.52,
-            usable_height / snapshot.n,
+            usable_height / snapshot.grid_size,
         )
 
-        board_width = snapshot.n * cell_width
-        board_height = snapshot.n * cell_height
+        board_width = snapshot.grid_size * cell_width
+        board_height = snapshot.grid_size * cell_height
 
         center_x = width / 2.0
         top_y = max(
@@ -409,8 +408,8 @@ class SonarBoardView(ttk.Frame):
             else None
         )
 
-        for row in range(snapshot.n):
-            for col in range(snapshot.n):
+        for row in range(snapshot.grid_size):
+            for col in range(snapshot.grid_size):
                 cell = (row, col)
 
                 points = self._cell_polygon(
@@ -464,7 +463,7 @@ class SonarBoardView(ttk.Frame):
 
                 self._cell_items[cell] = item_id
 
-                if config_test.TEST_BOARD_SHOW_COORDS:
+                if GUI_CONFIG.board_show_coords:
                     center = self._cell_center(points)
 
                     self.canvas.create_text(
@@ -570,8 +569,8 @@ class SonarBoardView(ttk.Frame):
     ) -> tuple[frozenset[Cell], ...]:
         sunk_cells = {
             (row, col)
-            for row in range(snapshot.n)
-            for col in range(snapshot.n)
+            for row in range(snapshot.grid_size)
+            for col in range(snapshot.grid_size)
             if snapshot.states[row][col]
             == CellState.SUNK
         }

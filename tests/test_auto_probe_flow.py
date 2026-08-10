@@ -12,34 +12,34 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 from flows.auto_probe_flow import (
-    recognition_state_is_hit,
+    is_hit_recognition_state,
 )
 
 
 class RecognitionStateRuleTest(unittest.TestCase):
     def test_hit_is_hit(self) -> None:
         self.assertTrue(
-            recognition_state_is_hit("hit")
+            is_hit_recognition_state("hit")
         )
 
     def test_miss_is_miss(self) -> None:
         self.assertFalse(
-            recognition_state_is_hit("miss")
+            is_hit_recognition_state("miss")
         )
 
     def test_unopened_is_miss(self) -> None:
         self.assertFalse(
-            recognition_state_is_hit("unopened")
+            is_hit_recognition_state("unopened")
         )
 
     def test_unknown_is_miss(self) -> None:
         self.assertFalse(
-            recognition_state_is_hit("unknown")
+            is_hit_recognition_state("unknown")
         )
 
     def test_rule_is_case_insensitive(self) -> None:
         self.assertTrue(
-            recognition_state_is_hit(" HIT ")
+            is_hit_recognition_state(" HIT ")
         )
 
 

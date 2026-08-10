@@ -1,24 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-import time
-
-import cv2
 
 import config
-import config_test
 
-from controllers.adb_controller import (
-    AdbController,
-)
-from controllers.network_controller import (
-    NetworkController,
-)
-from controllers.page_controller import (
-    PageController,
-)
+from controllers.adb_controller import AdbController
+from controllers.network_controller import NetworkController
+from controllers.page_controller import PageController
 from logger import get_logger
 from sonar import (
     Cell,
@@ -26,20 +15,24 @@ from sonar import (
     SonarBoard,
     SonarStrategy,
 )
+from sonar_config import AUTO_PROBE_CONFIG
 from vision import (
     DiamondHitConfig,
     DiamondHitResult,
-    MatchResult,
     classify_diamond_hit,
-    find_template_with_score,
 )
 
-from .sonar_flow import (
-    ManualProbeContext,
-    SonarPageState,
-    detect_sonar_page_state,
-    enter_activity_initial,
-    prepare_manual_probe_once,
+from .auto_probe_ready import ensure_auto_probe_ready
+from .auto_probe_recovery import (
+    ProbeRecoveryResult,
+    _recover_after_strategy_done_once,
+    recover_after_hit_once,
+    recover_after_miss_once,
+    wait_retry_with_failure_capture,
+)
+from .probe_flow import (
+    ProbeContext,
+    prepare_probe_once,
 )
 
 
@@ -47,21 +40,10 @@ logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
-class ProbeRecoveryResult:
-    """一次探测结束后的网络与页面恢复结果。"""
-
-    mode: str
-    retry_found: bool | None
-    final_state: SonarPageState
-    weak_network_enabled: bool
-    reject_network_enabled: bool
-
-
-@dataclass(frozen=True)
 class AutoProbeOnceResult:
     """完整自动一发探测的结果。"""
 
-    context: ManualProbeContext
+    context: ProbeContext
     recognition: DiamondHitResult
     hit: bool
     newly_confirmed: tuple[ConfirmedShip, ...]
@@ -69,567 +51,37 @@ class AutoProbeOnceResult:
     next_cell: Cell | None
 
 
-def recognition_state_is_hit(
+def is_hit_recognition_state(
     state: str,
 ) -> bool:
-    """
-    把 diamond_hit 的识别状态转换成策略需要的 HIT / MISS。
-
-    当前正式规则：
-    hit -> HIT
-    其余状态 -> MISS
-    """
+    """只有 diamond_hit 的 hit 状态按 HIT 写回策略。"""
     return str(state).strip().lower() == "hit"
 
 
-def build_test_hit_config(
+def build_default_hit_config(
     *,
     debug: bool = True,
     debug_dir: str | Path | None = None,
 ) -> DiamondHitConfig:
-    """创建当前固定 10x10 测试关卡使用的命中识别参数。"""
+    """创建当前固定 10x10 关卡使用的命中识别参数。"""
     actual_debug_dir = (
         Path(debug_dir)
         if debug_dir is not None
         else (
             config.SCREENSHOT_DIR
-            / config_test.TEST_DIAMOND_DEBUG_DIR_NAME
+            / AUTO_PROBE_CONFIG.diamond_debug_dir_name
         )
     )
 
     return DiamondHitConfig(
-        diamond_w=config_test.TEST_DIAMOND_W,
-        diamond_h=config_test.TEST_DIAMOND_H,
+        diamond_w=AUTO_PROBE_CONFIG.diamond_w,
+        diamond_h=AUTO_PROBE_CONFIG.diamond_h,
         search_radius=(
-            config_test.TEST_DIAMOND_SEARCH_RADIUS
+            AUTO_PROBE_CONFIG.diamond_search_radius
         ),
         debug=bool(debug),
         debug_dir=str(actual_debug_dir),
     )
-
-
-def ensure_auto_probe_ready(
-    adb: AdbController,
-    page: PageController,
-    network: NetworkController,
-) -> None:
-    """
-    把当前游戏整理到“一发探测可以开始”的状态。
-
-    最终要求：
-    活动详情页
-    + 弱网 DROP 开启
-    + REJECT 关闭
-    """
-    config.ensure_directories()
-    adb.ensure_device_online()
-
-    network_state = network.get_state()
-
-    if network_state.reject_enabled:
-        raise RuntimeError(
-            "开始自动探测前仍存在 REJECT 断网。"
-            "请先恢复网络。"
-        )
-
-    page_state = detect_sonar_page_state(
-        page
-    )
-
-    if page_state == SonarPageState.ACTIVITY_DETAIL:
-        if not network_state.weak_enabled:
-            network.enable_weak_network()
-
-    else:
-        # enter_activity_initial() 的设计是先正常打开活动列表，
-        # 再在正确节点开启弱网。
-        if network_state.weak_enabled:
-            network.disable_weak_network()
-
-        entry = enter_activity_initial(
-            adb=adb,
-            page=page,
-            network=network,
-        )
-
-        if (
-            entry.final_state
-            != SonarPageState.ACTIVITY_DETAIL
-        ):
-            raise RuntimeError(
-                "自动探测准备失败："
-                "没有进入活动详情页"
-            )
-
-    final_network = network.get_state()
-    final_page = detect_sonar_page_state(
-        page
-    )
-
-    if (
-        final_page
-        != SonarPageState.ACTIVITY_DETAIL
-    ):
-        raise RuntimeError(
-            "自动探测准备失败："
-            f"最终页面={final_page.value}"
-        )
-
-    if final_network.reject_enabled:
-        raise RuntimeError(
-            "自动探测准备失败："
-            "REJECT 仍然开启"
-        )
-
-    if not final_network.weak_enabled:
-        raise RuntimeError(
-            "自动探测准备失败："
-            "弱网 DROP 没有开启"
-        )
-
-    logger.info(
-        "自动单发准备完成："
-        "page=%s，weak=%s，reject=%s",
-        final_page.value,
-        final_network.weak_enabled,
-        final_network.reject_enabled,
-    )
-
-
-
-def wait_retry_with_failure_capture(
-    adb: AdbController,
-) -> tuple[MatchResult | None, Path | None]:
-    """
-    等待 retry.png 出现。
-
-    等待期间持续记录“相似度最高”的那一帧。
-    如果最终超时，就把最高分画面保存到 retry_failure 目录，
-    方便直接检查模板为什么没有识别成功。
-    """
-    template_path = (
-        config.TEMPLATE_DIR
-        / config_test.TEST_RETRY_TEMPLATE
-    )
-
-    if not template_path.is_file():
-        raise FileNotFoundError(
-            f"缺少 retry 模板：{template_path}"
-        )
-
-    timeout = float(
-        config_test.TEST_RETRY_WAIT_TIMEOUT
-    )
-    threshold = float(
-        config_test.TEST_RETRY_MATCH_THRESHOLD
-    )
-    poll_interval = float(
-        config.PAGE_POLL_INTERVAL
-    )
-
-    deadline = time.monotonic() + timeout
-    attempts = 0
-    best_score_seen = 0.0
-    best_screenshot = None
-
-    logger.info(
-        "开始等待模板：%s，超时=%.1f秒，阈值=%.3f",
-        template_path.name,
-        timeout,
-        threshold,
-    )
-
-    while True:
-        attempts += 1
-        screenshot = adb.read_screenshot()
-
-        match, best_score = find_template_with_score(
-            screenshot,
-            template_path,
-            threshold=threshold,
-        )
-
-        if (
-            best_screenshot is None
-            or best_score > best_score_seen
-        ):
-            best_score_seen = best_score
-            best_screenshot = screenshot.copy()
-
-        if match is not None:
-            logger.info(
-                "等待模板成功：%s，相似度=%.3f，中心=%s，检测次数=%s",
-                template_path.name,
-                match.score,
-                match.center,
-                attempts,
-            )
-            return match, None
-
-        remaining = deadline - time.monotonic()
-
-        if remaining <= 0:
-            failure_dir = (
-                config.SCREENSHOT_DIR
-                / config_test.TEST_RETRY_FAILURE_DIR_NAME
-            )
-            failure_dir.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-
-            timestamp = datetime.now().strftime(
-                "%Y%m%d_%H%M%S_%f"
-            )
-            failure_path = (
-                failure_dir
-                / (
-                    f"retry_fail_{timestamp}"
-                    f"_score_{best_score_seen:.3f}.png"
-                )
-            )
-
-            if best_screenshot is not None:
-                ok = cv2.imwrite(
-                    str(failure_path),
-                    best_screenshot,
-                )
-
-                if not ok:
-                    raise RuntimeError(
-                        "retry 识别失败截图保存失败："
-                        f"{failure_path}"
-                    )
-
-            logger.warning(
-                "等待模板超时：%s，%.1f秒内未出现，"
-                "最高相似度=%.3f，阈值=%.3f，检测次数=%s，"
-                "失败截图=%s",
-                template_path.name,
-                timeout,
-                best_score_seen,
-                threshold,
-                attempts,
-                failure_path,
-            )
-
-            return None, failure_path
-
-        adb.delay(
-            min(
-                poll_interval,
-                remaining,
-            )
-        )
-
-
-def recover_after_hit_once(
-    adb: AdbController,
-    page: PageController,
-    network: NetworkController,
-) -> ProbeRecoveryResult:
-    """
-    HIT 后直接联网 5 秒，再恢复到下一发弱网准备状态。
-
-    流程：
-    确认当前仍是弱网
-    -> 直接恢复正常联网
-    -> 等待 5 秒，让本次命中正常提交
-    -> 检查 / 恢复活动详情页
-    -> 再开启弱网 DROP
-    -> 检查下一发准备状态
-
-    HIT 分支不会开启 REJECT，也不会等待或点击 retry。
-    """
-    logger.info(
-        "检测到 HIT：跳过 REJECT/retry，直接恢复正常联网"
-    )
-
-    state = network.get_state()
-
-    if state.reject_enabled:
-        raise RuntimeError(
-            "HIT 恢复前 REJECT 已经开启，当前网络状态异常"
-        )
-
-    if not state.weak_enabled:
-        raise RuntimeError(
-            "HIT 恢复前弱网 DROP 没有开启"
-        )
-
-    # 清掉 DROP / REJECT，立即恢复正常联网。
-    network.restore_network()
-
-    online_wait = float(
-        config_test.TEST_HIT_ONLINE_WAIT_SECONDS
-    )
-
-    logger.info(
-        "HIT 已恢复正常联网，等待 %.1f 秒让结果稳定",
-        online_wait,
-    )
-
-    adb.delay(online_wait)
-
-    # 5 秒后统一整理到下一发可以开始的状态。
-    # 如果仍在活动详情页，会直接重新开启弱网；
-    # 如果页面已经回到主岛，会复用现有进入活动流程。
-    ensure_auto_probe_ready(
-        adb=adb,
-        page=page,
-        network=network,
-    )
-
-    final_network = network.get_state()
-    final_state = detect_sonar_page_state(
-        page
-    )
-
-    if (
-        final_state
-        != SonarPageState.ACTIVITY_DETAIL
-    ):
-        raise RuntimeError(
-            "HIT 恢复失败：5 秒联网后没有回到活动详情页"
-        )
-
-    if final_network.reject_enabled:
-        raise RuntimeError(
-            "HIT 恢复失败：REJECT 意外处于开启状态"
-        )
-
-    if not final_network.weak_enabled:
-        raise RuntimeError(
-            "HIT 恢复失败：弱网 DROP 没有重新开启"
-        )
-
-    result = ProbeRecoveryResult(
-        mode="hit_online_wait",
-        retry_found=None,
-        final_state=final_state,
-        weak_network_enabled=(
-            final_network.weak_enabled
-        ),
-        reject_network_enabled=(
-            final_network.reject_enabled
-        ),
-    )
-
-    logger.info(
-        "HIT 恢复完成：联网等待=%.1f秒，page=%s，weak=%s，reject=%s",
-        online_wait,
-        result.final_state.value,
-        result.weak_network_enabled,
-        result.reject_network_enabled,
-    )
-
-    return result
-
-
-def _recover_after_strategy_done_once(
-    adb: AdbController,
-    page: PageController,
-    network: NetworkController,
-    *,
-    hit: bool,
-) -> ProbeRecoveryResult:
-    """
-    策略已经确认全部潜艇时，只把本发结果正常提交到服务器。
-
-    当前阶段还没有胜利页面处理，所以这里不会再尝试回到活动详情页。
-    HIT 时恢复正常网络并等待现有的 5 秒，让最后一发正常结算；
-    然后保持正常联网，把页面留给后续胜利处理功能。
-    """
-    logger.info(
-        "策略已确认全部潜艇：进入胜利处理边界，停止重新弱网和重进活动"
-    )
-
-    network.restore_network()
-
-    if hit:
-        online_wait = float(
-            config_test.TEST_HIT_ONLINE_WAIT_SECONDS
-        )
-        logger.info(
-            "最后一发 HIT 已恢复正常联网，等待 %.1f 秒完成结算",
-            online_wait,
-        )
-        adb.delay(online_wait)
-
-    final_network = network.get_state()
-    final_state = detect_sonar_page_state(page)
-
-    result = ProbeRecoveryResult(
-        mode="strategy_done_online",
-        retry_found=None,
-        final_state=final_state,
-        weak_network_enabled=final_network.weak_enabled,
-        reject_network_enabled=final_network.reject_enabled,
-    )
-
-    logger.info(
-        "策略完成后的临时收尾完成：page=%s，weak=%s，reject=%s",
-        result.final_state.value,
-        result.weak_network_enabled,
-        result.reject_network_enabled,
-    )
-
-    return result
-
-
-def recover_after_probe_once(
-    adb: AdbController,
-    page: PageController,
-    network: NetworkController,
-) -> ProbeRecoveryResult:
-    """
-    完成一次探测后的 REJECT / retry / 网络 / 页面恢复。
-
-    流程：
-    确认弱网仍开启
-    -> 开启 REJECT
-    -> 等 retry
-    -> 关闭 REJECT
-    -> 点击 retry
-    -> 关闭弱网
-    -> 自动重新进入声纳活动
-    -> 重新开启弱网
-    -> 检查活动详情页
-
-    如果 retry 没有出现：
-    关闭 REJECT，但保留弱网 DROP，直接报错。
-    这样测试异常时不会主动把本次请求放回正常网络。
-    """
-    logger.info(
-        "开始执行单发探测恢复链"
-    )
-
-    state = network.get_state()
-
-    if state.reject_enabled:
-        raise RuntimeError(
-            "进入恢复链前 REJECT 已经开启，"
-            "当前网络状态异常"
-        )
-
-    if not state.weak_enabled:
-        raise RuntimeError(
-            "进入恢复链前弱网 DROP 没有开启"
-        )
-
-    retry_match = None
-    retry_failure_path: Path | None = None
-    reject_enabled_by_flow = False
-
-    try:
-        network.enable_reject_network()
-        reject_enabled_by_flow = True
-
-        retry_match, retry_failure_path = (
-            wait_retry_with_failure_capture(
-                adb=adb,
-            )
-        )
-
-    finally:
-        if reject_enabled_by_flow:
-            try:
-                network.disable_reject_network()
-            except Exception:
-                logger.exception(
-                    "等待 retry 结束后关闭 REJECT 失败"
-                )
-                raise
-
-    if retry_match is None:
-        logger.error(
-            "REJECT 后没有检测到 retry；"
-            "已关闭 REJECT，弱网 DROP 保持开启"
-        )
-        raise RuntimeError(
-            "单发恢复失败："
-            f"{config_test.TEST_RETRY_WAIT_TIMEOUT:g} 秒内"
-            "没有出现 retry 按钮；"
-            f"失败截图={retry_failure_path}"
-        )
-
-    adb.delay(
-        config_test.TEST_RETRY_BEFORE_CLICK_DELAY
-    )
-
-    page.click_match(
-        retry_match,
-        wait_seconds=(
-            config_test.TEST_RETRY_AFTER_CLICK_DELAY
-        ),
-    )
-
-    logger.info(
-        "已点击 retry：中心=%s，相似度=%.3f",
-        retry_match.center,
-        retry_match.score,
-    )
-
-    # retry 已经点击后，再释放 DROP，恢复正常联网。
-    network.disable_weak_network()
-
-    # 复用现有入口流程。
-    # 它会根据当前位置重新找到声纳，并在正确节点重新开启弱网。
-    entry = enter_activity_initial(
-        adb=adb,
-        page=page,
-        network=network,
-    )
-
-    final_network = network.get_state()
-    final_state = detect_sonar_page_state(
-        page
-    )
-
-    if (
-        entry.final_state
-        != SonarPageState.ACTIVITY_DETAIL
-        or final_state
-        != SonarPageState.ACTIVITY_DETAIL
-    ):
-        raise RuntimeError(
-            "单发恢复失败："
-            "恢复后没有回到活动详情页"
-        )
-
-    if final_network.reject_enabled:
-        raise RuntimeError(
-            "单发恢复失败："
-            "恢复后 REJECT 仍然开启"
-        )
-
-    if not final_network.weak_enabled:
-        raise RuntimeError(
-            "单发恢复失败："
-            "恢复后弱网 DROP 没有重新开启"
-        )
-
-    result = ProbeRecoveryResult(
-        mode="miss_retry",
-        retry_found=True,
-        final_state=final_state,
-        weak_network_enabled=(
-            final_network.weak_enabled
-        ),
-        reject_network_enabled=(
-            final_network.reject_enabled
-        ),
-    )
-
-    logger.info(
-        "单发探测恢复完成："
-        "page=%s，weak=%s，reject=%s",
-        result.final_state.value,
-        result.weak_network_enabled,
-        result.reject_network_enabled,
-    )
-
-    return result
 
 
 def run_auto_probe_once(
@@ -643,41 +95,7 @@ def run_auto_probe_once(
     output_dir: str | Path | None = None,
     recognition_index: int = 0,
 ) -> AutoProbeOnceResult:
-    """
-    执行一整发自动探测，并恢复到下一发可以继续的状态。
-
-    完整链条：
-    页面 / 网络准备
-    -> 策略选格
-    -> before 截图
-    -> 点击目标格
-    -> 退出活动
-    -> 重进活动
-    -> after 截图
-    -> diamond_hit 自动判断
-    -> 写回策略
-
-    HIT：
-    -> 直接恢复正常联网
-    -> 等待 5 秒
-    -> 恢复 / 确认活动详情页
-    -> 再开弱网
-
-    MISS：
-    -> REJECT
-    -> 等 retry
-    -> 关闭 REJECT
-    -> 点击 retry
-    -> 关闭弱网
-    -> 重进活动
-    -> 再开弱网
-
-    最后选择下一格。
-
-    当前识别结果解释规则：
-    state == "hit" -> HIT
-    其他状态 -> MISS
-    """
+    """执行一整发自动探测，并按结果完成对应恢复。"""
     logger.info(
         "开始完整自动单发探测"
     )
@@ -693,11 +111,11 @@ def run_auto_probe_once(
         if output_dir is not None
         else (
             config.SCREENSHOT_DIR
-            / config_test.TEST_AUTO_PROBE_DIR_NAME
+            / AUTO_PROBE_CONFIG.auto_probe_dir_name
         )
     )
 
-    context = prepare_manual_probe_once(
+    context = prepare_probe_once(
         adb=adb,
         page=page,
         board=board,
@@ -715,7 +133,7 @@ def run_auto_probe_once(
     classifier_config = (
         hit_config
         if hit_config is not None
-        else build_test_hit_config()
+        else build_default_hit_config()
     )
 
     recognition = classify_diamond_hit(
@@ -726,7 +144,7 @@ def run_auto_probe_once(
         index=int(recognition_index),
     )
 
-    hit = recognition_state_is_hit(
+    hit = is_hit_recognition_state(
         recognition.state
     )
 
@@ -783,7 +201,7 @@ def run_auto_probe_once(
             network=network,
         )
     else:
-        recovery = recover_after_probe_once(
+        recovery = recover_after_miss_once(
             adb=adb,
             page=page,
             network=network,
@@ -810,3 +228,16 @@ def run_auto_probe_once(
     )
 
     return result
+
+
+__all__ = [
+    "AutoProbeOnceResult",
+    "ProbeRecoveryResult",
+    "build_default_hit_config",
+    "ensure_auto_probe_ready",
+    "is_hit_recognition_state",
+    "recover_after_hit_once",
+    "recover_after_miss_once",
+    "run_auto_probe_once",
+    "wait_retry_with_failure_capture",
+]

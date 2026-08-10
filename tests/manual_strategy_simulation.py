@@ -10,7 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-import config_test
+from sonar_config import DEFAULT_LEVEL_CONFIG
 
 from sonar import (
     CheckerboardHuntStrategy,
@@ -31,14 +31,14 @@ HIDDEN_SHIPS = (
 
 def main() -> None:
     board = SonarBoard(
-        n=config_test.TEST_GRID_SIZE,
-        submarines=config_test.TEST_SUBMARINES,
+        grid_size=DEFAULT_LEVEL_CONFIG.grid_size,
+        submarines=DEFAULT_LEVEL_CONFIG.submarines,
     )
 
     strategy = CheckerboardHuntStrategy(
         board,
-        hunt_parity=config_test.TEST_HUNT_PARITY,
-        use_safety_rule=config_test.TEST_USE_SAFETY_RULE,
+        hunt_parity=DEFAULT_LEVEL_CONFIG.hunt_parity,
+        use_safety_rule=DEFAULT_LEVEL_CONFIG.use_safety_rule,
     )
 
     occupied = {

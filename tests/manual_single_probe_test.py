@@ -17,14 +17,14 @@ if str(PROJECT_ROOT) not in sys.path:
     )
 
 
-import config_test
+from sonar_config import DEFAULT_LEVEL_CONFIG
 
 from controllers import (
     AdbController,
     PageController,
 )
 from flows import (
-    prepare_manual_probe_once,
+    prepare_probe_once,
     submit_manual_probe_result,
 )
 from sonar import (
@@ -52,9 +52,9 @@ def read_manual_result() -> bool:
 
 
 def main() -> None:
-    if config_test.TEST_BOARD_QUAD is None:
+    if DEFAULT_LEVEL_CONFIG.board_quad is None:
         raise RuntimeError(
-            "config_test.TEST_BOARD_QUAD "
+            "DEFAULT_LEVEL_CONFIG.board_quad "
             "还没有填写"
         )
 
@@ -97,25 +97,25 @@ def main() -> None:
     )
 
     board = SonarBoard(
-        n=config_test.TEST_GRID_SIZE,
-        submarines=config_test.TEST_SUBMARINES,
+        grid_size=DEFAULT_LEVEL_CONFIG.grid_size,
+        submarines=DEFAULT_LEVEL_CONFIG.submarines,
     )
 
     board.set_screen_quad(
-        config_test.TEST_BOARD_QUAD
+        DEFAULT_LEVEL_CONFIG.board_quad
     )
 
     strategy = CheckerboardHuntStrategy(
         board,
         hunt_parity=(
-            config_test.TEST_HUNT_PARITY
+            DEFAULT_LEVEL_CONFIG.hunt_parity
         ),
         use_safety_rule=(
-            config_test.TEST_USE_SAFETY_RULE
+            DEFAULT_LEVEL_CONFIG.use_safety_rule
         ),
     )
 
-    context = prepare_manual_probe_once(
+    context = prepare_probe_once(
         adb=adb,
         page=page,
         board=board,

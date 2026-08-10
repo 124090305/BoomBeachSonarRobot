@@ -10,7 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-import config_test
+from sonar_config import DEFAULT_LEVEL_CONFIG
 
 from controllers.adb_controller import AdbController
 from controllers.page_controller import PageController
@@ -27,9 +27,9 @@ TEST_CELLS = [
 
 
 def main() -> None:
-    if config_test.TEST_BOARD_QUAD is None:
+    if DEFAULT_LEVEL_CONFIG.board_quad is None:
         raise RuntimeError(
-            "config_test.TEST_BOARD_QUAD 还没有填写"
+            "DEFAULT_LEVEL_CONFIG.board_quad 还没有填写"
         )
 
     # 连接模拟器
@@ -40,13 +40,13 @@ def main() -> None:
 
     # 建立程序棋盘
     board = SonarBoard(
-        n=config_test.TEST_GRID_SIZE,
-        submarines=config_test.TEST_SUBMARINES,
+        grid_size=DEFAULT_LEVEL_CONFIG.grid_size,
+        submarines=DEFAULT_LEVEL_CONFIG.submarines,
     )
 
     # 根据四角生成 100 个点击中心
     board.set_screen_quad(
-        config_test.TEST_BOARD_QUAD
+        DEFAULT_LEVEL_CONFIG.board_quad
     )
 
     print("棋盘坐标映射完成")

@@ -21,7 +21,7 @@ from sonar import (
 class CheckerboardHuntStrategyTests(unittest.TestCase):
     def test_fixed_hunt_order(self) -> None:
         board = SonarBoard(
-            n=4,
+            grid_size=4,
             submarines=(2,),
         )
         strategy = CheckerboardHuntStrategy(
@@ -45,7 +45,7 @@ class CheckerboardHuntStrategyTests(unittest.TestCase):
 
     def test_miss_continues_fixed_hunt(self) -> None:
         board = SonarBoard(
-            n=4,
+            grid_size=4,
             submarines=(2,),
         )
         strategy = CheckerboardHuntStrategy(board)
@@ -63,7 +63,7 @@ class CheckerboardHuntStrategyTests(unittest.TestCase):
 
     def test_hit_switches_to_target(self) -> None:
         board = SonarBoard(
-            n=5,
+            grid_size=5,
             submarines=(2, 3),
         )
         strategy = CheckerboardHuntStrategy(board)
@@ -84,7 +84,7 @@ class CheckerboardHuntStrategyTests(unittest.TestCase):
 
     def test_aligned_hits_only_extend_line(self) -> None:
         board = SonarBoard(
-            n=6,
+            grid_size=6,
             submarines=(3,),
         )
         strategy = CheckerboardHuntStrategy(board)
@@ -105,7 +105,7 @@ class CheckerboardHuntStrategyTests(unittest.TestCase):
 
     def test_confirm_ship_and_exclude_safety_area(self) -> None:
         board = SonarBoard(
-            n=6,
+            grid_size=6,
             submarines=(2, 3),
         )
         strategy = CheckerboardHuntStrategy(board)
@@ -159,7 +159,7 @@ class CheckerboardHuntStrategyTests(unittest.TestCase):
 
     def test_full_simulated_level(self) -> None:
         board = SonarBoard(
-            n=10,
+            grid_size=10,
             submarines=(2, 2, 3, 4, 5),
         )
         strategy = CheckerboardHuntStrategy(board)

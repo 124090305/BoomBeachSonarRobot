@@ -20,7 +20,7 @@ from sonar import (
 class StrategyUiStateTests(unittest.TestCase):
     def test_snapshot_tracks_next_cell_and_mode(self) -> None:
         board = SonarBoard(
-            n=5,
+            grid_size=5,
             submarines=(2, 3),
         )
         strategy = CheckerboardHuntStrategy(board)
@@ -50,7 +50,7 @@ class StrategyUiStateTests(unittest.TestCase):
 
     def test_snapshot_tracks_confirmed_ship_and_excluded_cells(self) -> None:
         board = SonarBoard(
-            n=5,
+            grid_size=5,
             submarines=(2,),
         )
         strategy = CheckerboardHuntStrategy(board)
