@@ -38,6 +38,51 @@ class ProbeContext:
     after_path: Path
 
 
+@dataclass
+class ProbeProgress:
+    """单发页面操作的可恢复进度。"""
+
+    cell: Cell | None = None
+    screen_point: Point | None = None
+    before_path: Path | None = None
+    after_path: Path | None = None
+    click_committed: bool = False
+    after_captured: bool = False
+
+    def mark_click_committed(self) -> None:
+        """记录 ADB 已接受目标格点击。"""
+        self.click_committed = True
+
+    def reset_after_game_rollback(self) -> None:
+        """游戏重启回档后丢弃本发未确认的页面进度。"""
+        self.cell = None
+        self.screen_point = None
+        self.before_path = None
+        self.after_path = None
+        self.click_committed = False
+        self.after_captured = False
+
+    def build_context(self) -> ProbeContext:
+        """把完整检查点转换成后续识别上下文。"""
+        if (
+            self.cell is None
+            or self.screen_point is None
+            or self.before_path is None
+            or self.after_path is None
+            or not self.after_captured
+        ):
+            raise RuntimeError(
+                "单发探测进度不完整，无法生成识别上下文"
+            )
+
+        return ProbeContext(
+            cell=self.cell,
+            screen_point=self.screen_point,
+            before_path=self.before_path,
+            after_path=self.after_path,
+        )
+
+
 @dataclass(frozen=True)
 class ManualProbeResult:
     """人工提交 HIT / MISS 后的最终结果。"""
@@ -53,6 +98,7 @@ def prepare_probe_once(
     board: SonarBoard,
     strategy: SonarStrategy,
     output_dir: str | Path | None = None,
+    progress: ProbeProgress | None = None,
 ) -> ProbeContext:
     """执行一次真实单发探测所需的公共页面操作。"""
     logger.info(
@@ -66,6 +112,15 @@ def prepare_probe_once(
         raise RuntimeError(
             "棋盘坐标映射不完整，"
             "无法执行真实格点点击"
+        )
+
+    actual_progress = progress or ProbeProgress()
+    cell = actual_progress.cell
+
+    if cell is not None and strategy.pending_cell != cell:
+        raise RuntimeError(
+            "单发恢复进度与策略 pending_cell 不一致："
+            f"progress={cell}, pending={strategy.pending_cell}"
         )
 
     cell = strategy.pending_cell
@@ -84,6 +139,9 @@ def prepare_probe_once(
         row,
         col,
     )
+
+    actual_progress.cell = cell
+    actual_progress.screen_point = (x, y)
 
     logger.info(
         "本次策略选格：逻辑格=%s，模拟器坐标=(%s, %s)",
@@ -123,31 +181,35 @@ def prepare_probe_once(
         exist_ok=True,
     )
 
-    timestamp = datetime.now().strftime(
-        "%Y%m%d_%H%M%S_%f"
-    )
+    if (
+        actual_progress.before_path is None
+        or actual_progress.after_path is None
+    ):
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S_%f"
+        )
 
-    prefix = (
-        f"probe_{timestamp}"
-        f"_r{row}_c{col}"
-    )
+        prefix = (
+            f"probe_{timestamp}"
+            f"_r{row}_c{col}"
+        )
 
-    before_path = (
-        probe_dir
-        / f"{prefix}_before.png"
-    )
+        actual_progress.before_path = (
+            probe_dir
+            / f"{prefix}_before.png"
+        )
 
-    after_path = (
-        probe_dir
-        / f"{prefix}_after.png"
-    )
+        actual_progress.after_path = (
+            probe_dir
+            / f"{prefix}_after.png"
+        )
 
     logger.info(
         "点击目标格前截图"
     )
 
-    saved_before = adb.take_screenshot(
-        before_path
+    actual_progress.before_path = adb.take_screenshot(
+        actual_progress.before_path
     )
 
     logger.info(
@@ -162,6 +224,9 @@ def prepare_probe_once(
         y,
         wait_seconds=(
             ACTIVITY_PAGE_CONFIG.probe_after_click_delay
+        ),
+        after_click=(
+            actual_progress.mark_click_committed
         ),
     )
 
@@ -195,16 +260,12 @@ def prepare_probe_once(
         "重新进入活动后截图"
     )
 
-    saved_after = adb.take_screenshot(
-        after_path
+    actual_progress.after_path = adb.take_screenshot(
+        actual_progress.after_path
     )
+    actual_progress.after_captured = True
 
-    context = ProbeContext(
-        cell=cell,
-        screen_point=(x, y),
-        before_path=saved_before,
-        after_path=saved_after,
-    )
+    context = actual_progress.build_context()
 
     logger.info(
         "单发页面操作完成："

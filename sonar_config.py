@@ -66,6 +66,8 @@ class ActivityPageConfig:
 class AutoProbeConfig:
     """自动单发识别、恢复和调试输出参数。"""
 
+    max_restart_attempts: int = 3
+
     retry_template: str = "retry.png"
     retry_wait_timeout: float = 20.0
     retry_match_threshold: float = 0.85

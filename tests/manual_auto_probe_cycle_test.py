@@ -73,7 +73,9 @@ def main() -> int:
     print("3. REJECT 已关闭。")
     print("4. 策略已经给出下一格，或本轮策略已经完成。")
     print()
-    print("识别规则：只有 state=hit 记 HIT，其余状态统一记 MISS。")
+    print("识别规则：只有 state=hit/miss 才写入策略。")
+    print("unknown/unopened 不写入策略；连续循环会重启并重试同一格。")
+    print("本脚本只执行单发，遇到这两种状态会报告失败。")
     print("HIT：直接联网 5 秒后重新开启弱网；MISS：继续 REJECT/retry。")
     print()
 

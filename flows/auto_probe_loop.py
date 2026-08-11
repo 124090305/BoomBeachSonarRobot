@@ -6,13 +6,23 @@ from threading import Event
 from typing import Callable
 
 from controllers.adb_controller import AdbController
+from controllers.game_controller import GameController
 from controllers.network_controller import NetworkController
 from controllers.page_controller import PageController
 from logger import get_logger
 from sonar import SonarBoard, SonarStrategy
+from sonar_config import AUTO_PROBE_CONFIG
 from vision import DiamondHitConfig
 
-from .auto_probe_flow import AutoProbeOnceResult, run_auto_probe_once
+from .auto_probe_exception_recovery import (
+    restart_auto_probe_once,
+    restore_auto_probe_network_safely,
+)
+from .auto_probe_flow import (
+    AutoProbeOnceResult,
+    AutoProbeProgress,
+    run_auto_probe_once,
+)
 
 
 logger = get_logger(__name__)
@@ -34,6 +44,111 @@ RoundCallback = Callable[[int, AutoProbeOnceResult], None]
 StatusCallback = Callable[[str], None]
 
 
+class AutoProbeRecoveryExhaustedError(RuntimeError):
+    """当前一发耗尽异常重启次数。"""
+
+
+def _run_once_with_restart_fallback(
+    adb: AdbController,
+    page: PageController,
+    network: NetworkController,
+    board: SonarBoard,
+    strategy: SonarStrategy,
+    *,
+    game: GameController | None,
+    hit_config: DiamondHitConfig | None,
+    output_dir: str | Path | None,
+    recognition_index: int,
+) -> AutoProbeOnceResult:
+    """执行当前一发，并在可恢复异常后按配置重启。"""
+    max_attempts = int(
+        AUTO_PROBE_CONFIG.max_restart_attempts
+    )
+
+    if max_attempts <= 0:
+        raise ValueError(
+            "max_restart_attempts 必须大于 0"
+        )
+
+    progress = AutoProbeProgress()
+    restart_attempts = 0
+    recovery_game = game
+    last_error: Exception | None = None
+
+    while True:
+        try:
+            return run_auto_probe_once(
+                adb=adb,
+                page=page,
+                network=network,
+                board=board,
+                strategy=strategy,
+                hit_config=hit_config,
+                output_dir=output_dir,
+                recognition_index=recognition_index,
+                progress=progress,
+            )
+        except RuntimeError as exc:
+            last_error = exc
+            logger.exception(
+                "自动探测当前发发生可恢复异常：%s",
+                exc,
+            )
+
+        recovered = False
+
+        while restart_attempts < max_attempts:
+            restart_attempts += 1
+
+            try:
+                if recovery_game is None:
+                    recovery_game = GameController(
+                        adb,
+                        network=network,
+                    )
+
+                restart_recovery = restart_auto_probe_once(
+                    game=recovery_game,
+                    adb=adb,
+                    page=page,
+                    network=network,
+                    attempt=restart_attempts,
+                    max_attempts=max_attempts,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.exception(
+                    "自动探测第 %s/%s 次异常重启恢复失败：%s",
+                    restart_attempts,
+                    max_attempts,
+                    exc,
+                )
+                continue
+
+            progress.apply_restart_recovery(
+                restart_recovery
+            )
+            recovered = True
+            break
+
+        if recovered:
+            continue
+
+        cleanup_ok = restore_auto_probe_network_safely(
+            network
+        )
+        message = (
+            "自动探测异常恢复失败："
+            f"已尝试重启 {max_attempts} 次；"
+            f"网络清理={'成功' if cleanup_ok else '失败'}；"
+            f"最后错误={last_error}"
+        )
+        logger.error(message)
+        raise AutoProbeRecoveryExhaustedError(
+            message
+        ) from last_error
+
+
 def run_auto_probe_loop(
     adb: AdbController,
     page: PageController,
@@ -41,6 +156,7 @@ def run_auto_probe_loop(
     board: SonarBoard,
     strategy: SonarStrategy,
     *,
+    game: GameController | None = None,
     stop_event: Event | None = None,
     hit_config: DiamondHitConfig | None = None,
     output_dir: str | Path | None = None,
@@ -83,16 +199,24 @@ def run_auto_probe_loop(
             stop_reason = "strategy_done"
             break
 
-        result = run_auto_probe_once(
-            adb=adb,
-            page=page,
-            network=network,
-            board=board,
-            strategy=strategy,
-            hit_config=hit_config,
-            output_dir=output_dir,
-            recognition_index=rounds,
-        )
+        try:
+            result = _run_once_with_restart_fallback(
+                adb=adb,
+                page=page,
+                network=network,
+                board=board,
+                strategy=strategy,
+                game=game,
+                hit_config=hit_config,
+                output_dir=output_dir,
+                recognition_index=rounds,
+            )
+        except AutoProbeRecoveryExhaustedError:
+            logger.exception(
+                "自动探测连续循环已安全停止"
+            )
+            stop_reason = "recovery_failed"
+            break
 
         rounds += 1
         last_result = result

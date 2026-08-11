@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -157,6 +157,116 @@ class AutoProbeRecoveryBranchTests(unittest.TestCase):
         hit_mock.assert_not_called()
         miss_mock.assert_not_called()
         done_mock.assert_called_once()
+
+    def test_unknown_does_not_write_strategy_result(self) -> None:
+        context = ProbeContext(
+            cell=(2, 3),
+            screen_point=(10, 20),
+            before_path=Path("before.png"),
+            after_path=Path("after.png"),
+        )
+        strategy = FakeStrategy(
+            done_after_report=False
+        )
+
+        with (
+            patch.object(
+                auto_probe_flow,
+                "ensure_auto_probe_ready",
+            ),
+            patch.object(
+                auto_probe_flow,
+                "prepare_probe_once",
+                return_value=context,
+            ),
+            patch.object(
+                auto_probe_flow,
+                "classify_diamond_hit",
+                return_value=make_recognition("unknown"),
+            ),
+            patch.object(
+                auto_probe_flow,
+                "recover_after_hit_once",
+            ) as hit_mock,
+            patch.object(
+                auto_probe_flow,
+                "recover_after_miss_once",
+            ) as miss_mock,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "识别结果无效",
+            ):
+                auto_probe_flow.run_auto_probe_once(
+                    adb=FakeAdb(),
+                    page=object(),
+                    network=object(),
+                    board=object(),
+                    strategy=strategy,
+                )
+
+        self.assertIsNone(strategy.reported)
+        self.assertEqual(strategy.pending_cell, (2, 3))
+        hit_mock.assert_not_called()
+        miss_mock.assert_not_called()
+
+    def test_recognized_hit_is_replayed_after_restart(self) -> None:
+        context = ProbeContext(
+            cell=(2, 3),
+            screen_point=(10, 20),
+            before_path=Path("before.png"),
+            after_path=Path("after.png"),
+        )
+        strategy = FakeStrategy(
+            done_after_report=False
+        )
+        page = Mock()
+        recovery = object()
+        progress = auto_probe_flow.AutoProbeProgress(
+            context=context,
+            recognition=make_recognition("hit"),
+            hit=True,
+            hit_replay_required=True,
+        )
+
+        with (
+            patch.object(
+                auto_probe_flow,
+                "ensure_auto_probe_ready",
+            ),
+            patch.object(
+                auto_probe_flow,
+                "prepare_probe_once",
+            ) as prepare_mock,
+            patch.object(
+                auto_probe_flow,
+                "classify_diamond_hit",
+            ) as classify_mock,
+            patch.object(
+                auto_probe_flow,
+                "recover_after_hit_once",
+                return_value=recovery,
+            ) as hit_mock,
+        ):
+            result = auto_probe_flow.run_auto_probe_once(
+                adb=FakeAdb(),
+                page=page,
+                network=object(),
+                board=object(),
+                strategy=strategy,
+                progress=progress,
+            )
+
+        prepare_mock.assert_not_called()
+        classify_mock.assert_not_called()
+        page.click_point.assert_called_once()
+        self.assertEqual(
+            page.click_point.call_args.args,
+            (10, 20),
+        )
+        hit_mock.assert_called_once()
+        self.assertEqual(strategy.reported, ((2, 3), True))
+        self.assertTrue(result.hit)
 
 
 if __name__ == "__main__":

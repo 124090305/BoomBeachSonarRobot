@@ -7,11 +7,15 @@ from flows import (
     AutoProbeOnceResult,
     run_auto_probe_loop,
 )
+from logger import get_logger
 
 from .runtime_context import AppRuntimeContext
 
 
 AutoLoopEvent = tuple[str, object]
+
+
+logger = get_logger(__name__)
 
 
 class AutoProbeLoopBridge:
@@ -88,6 +92,7 @@ class AutoProbeLoopBridge:
                 network=context.network,
                 board=context.board,
                 strategy=context.strategy,
+                game=context.game,
                 stop_event=self.stop_event,
                 on_round=self._queue_round,
             )
@@ -95,6 +100,13 @@ class AutoProbeLoopBridge:
             context.network.restore_network()
 
         except Exception as exc:
+            try:
+                context.network.restore_network()
+            except Exception:
+                logger.exception(
+                    "自动循环异常退出后的网络清理失败"
+                )
+
             self.events.put(("error", exc))
             return
 

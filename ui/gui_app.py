@@ -532,7 +532,9 @@ class BoomBeachSonarApp(tk.Tk):
                     f"发数：{summary.rounds} | HIT：{summary.hits} | MISS：{summary.misses}"
                 )
 
-                if summary.strategy_done:
+                if summary.stop_reason == "recovery_failed":
+                    state_text = "异常恢复失败，已安全停止"
+                elif summary.strategy_done:
                     state_text = "策略完成，等待胜利处理"
                 elif summary.stop_reason == "requested":
                     state_text = "已停止"

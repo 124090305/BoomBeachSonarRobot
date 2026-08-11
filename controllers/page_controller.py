@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Callable
 
 import config
 from controllers.adb_controller import AdbController
@@ -26,6 +27,8 @@ class PageController:
         x: int,
         y: int,
         wait_seconds: float = config.PAGE_ACTION_DELAY,
+        *,
+        after_click: Callable[[], None] | None = None,
     ) -> None:
         """点击固定坐标，并等待页面响应。"""
         x = int(x)
@@ -41,6 +44,10 @@ class PageController:
         )
 
         self.adb.click(x, y)
+
+        if after_click is not None:
+            after_click()
+
         self._delay(wait_seconds)
 
     def swipe(

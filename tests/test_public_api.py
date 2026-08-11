@@ -35,6 +35,7 @@ class PublicApiTests(unittest.TestCase):
     def test_formal_config_objects_are_available(self) -> None:
         self.assertEqual(DEFAULT_LEVEL_CONFIG.grid_size, 10)
         self.assertTrue(ACTIVITY_PAGE_CONFIG.activity_button_template)
+        self.assertEqual(AUTO_PROBE_CONFIG.max_restart_attempts, 3)
         self.assertGreater(AUTO_PROBE_CONFIG.hit_online_wait_seconds, 0)
         self.assertGreater(GUI_CONFIG.board_view_width, 0)
 
