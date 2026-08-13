@@ -23,6 +23,10 @@ from .sonar_page import (
     wait_activity_detail_ready,
     wait_sonar_ready,
 )
+from .progress import (
+    ProgressCallback,
+    emit_progress,
+)
 
 
 logger = get_logger(__name__)
@@ -42,6 +46,7 @@ def dismiss_activity_start_hint(
     page: PageController,
     *,
     stop_event: Event | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> None:
     """点击棋盘外安全点，关闭“点击任意地方开始”提示。"""
     interruptible_wait(
@@ -79,6 +84,7 @@ def enter_activity_initial(
     network: NetworkController,
     *,
     stop_event: Event | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> ActivityEntryResult:
     """从主岛初次进入声纳活动。"""
     raise_if_stop_requested(
@@ -87,6 +93,10 @@ def enter_activity_initial(
 
     config.ensure_directories()
     adb.ensure_device_online()
+    emit_progress(
+        on_progress,
+        device_online=True,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -96,11 +106,17 @@ def enter_activity_initial(
         detect_sonar_page_state(
             page,
             stop_event=stop_event,
+            on_progress=on_progress,
         )
     )
 
     network_state = (
         network.get_state()
+    )
+    emit_progress(
+        on_progress,
+        weak_network_enabled=network_state.weak_enabled,
+        reject_network_enabled=network_state.reject_enabled,
     )
 
     raise_if_stop_requested(
@@ -123,6 +139,11 @@ def enter_activity_initial(
             if not network_state.weak_enabled:
                 network.enable_weak_network()
                 weak_enabled_by_flow = True
+                emit_progress(
+                    on_progress,
+                    weak_network_enabled=True,
+                    reject_network_enabled=False,
+                )
 
                 raise_if_stop_requested(
                     stop_event
@@ -132,6 +153,7 @@ def enter_activity_initial(
                 detect_sonar_page_state(
                     page,
                     stop_event=stop_event,
+                    on_progress=on_progress,
                 )
             )
 
@@ -145,6 +167,7 @@ def enter_activity_initial(
         sonar_match = wait_sonar_ready(
             page,
             stop_event=stop_event,
+            on_progress=on_progress,
         )
 
         if sonar_match is None:
@@ -185,6 +208,11 @@ def enter_activity_initial(
         if not network_state.weak_enabled:
             network.enable_weak_network()
             weak_enabled_by_flow = True
+            emit_progress(
+                on_progress,
+                weak_network_enabled=True,
+                reject_network_enabled=False,
+            )
 
         raise_if_stop_requested(
             stop_event
@@ -271,6 +299,7 @@ def enter_activity_initial(
                     .activity_detail_ready_timeout
                 ),
                 stop_event=stop_event,
+                on_progress=on_progress,
             )
         )
 
@@ -283,12 +312,14 @@ def enter_activity_initial(
         dismiss_activity_start_hint(
             page,
             stop_event=stop_event,
+            on_progress=on_progress,
         )
 
         final_state = (
             detect_sonar_page_state(
                 page,
                 stop_event=stop_event,
+                on_progress=on_progress,
             )
         )
 
@@ -303,6 +334,11 @@ def enter_activity_initial(
 
         current_network_state = (
             network.get_state()
+        )
+        emit_progress(
+            on_progress,
+            weak_network_enabled=current_network_state.weak_enabled,
+            reject_network_enabled=current_network_state.reject_enabled,
         )
 
         raise_if_stop_requested(
@@ -345,6 +381,10 @@ def enter_activity_initial(
         if weak_enabled_by_flow:
             try:
                 network.disable_weak_network()
+                emit_progress(
+                    on_progress,
+                    weak_network_enabled=False,
+                )
             except Exception:
                 logger.exception(
                     "初始进入活动失败后，"
@@ -359,6 +399,7 @@ def reenter_activity_for_probe(
     page: PageController,
     *,
     stop_event: Event | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> None:
     """退出活动详情后重新进入当前声纳活动。"""
     raise_if_stop_requested(
@@ -418,6 +459,7 @@ def reenter_activity_for_probe(
             ACTIVITY_PAGE_CONFIG.activity_detail_ready_timeout
         ),
         stop_event=stop_event,
+        on_progress=on_progress,
     )
 
     if not ready:
@@ -429,6 +471,7 @@ def reenter_activity_for_probe(
     dismiss_activity_start_hint(
         page,
         stop_event=stop_event,
+        on_progress=on_progress,
     )
 
     logger.info(

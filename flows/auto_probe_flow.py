@@ -41,6 +41,10 @@ from .probe_flow import (
     ProbeProgress,
     prepare_probe_once,
 )
+from .progress import (
+    ProgressCallback,
+    emit_progress,
+)
 
 
 logger = get_logger(__name__)
@@ -319,6 +323,7 @@ def run_auto_probe_once(
     progress: AutoProbeProgress | None = None,
     stop_event: Event | None = None,
     on_result_committed: ResultCommittedCallback | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> AutoProbeOnceResult:
     """执行一整发自动探测，并按结果完成对应恢复。"""
     raise_if_stop_requested(
@@ -334,6 +339,18 @@ def run_auto_probe_once(
         page=page,
         network=network,
         stop_event=stop_event,
+        on_progress=on_progress,
+    )
+
+    emit_progress(
+        on_progress,
+        phase="preparing_probe",
+        target_mode=(
+            "next"
+            if strategy.pending_cell is not None
+            else "none"
+        ),
+        target_cell=strategy.pending_cell,
     )
 
     actual_progress = progress or AutoProbeProgress()
@@ -356,6 +373,7 @@ def run_auto_probe_once(
             output_dir=actual_output_dir,
             progress=actual_progress.probe,
             stop_event=stop_event,
+            on_progress=on_progress,
         )
 
     context = actual_progress.context
@@ -370,6 +388,13 @@ def run_auto_probe_once(
 
     raise_if_stop_requested(
         stop_event
+    )
+
+    emit_progress(
+        on_progress,
+        phase="judging_result",
+        target_mode="current",
+        target_cell=context.cell,
     )
 
     _complete_recognition_and_sync(
@@ -415,26 +440,41 @@ def run_auto_probe_once(
         if actual_progress.restart_recovery is not None:
             recovery = actual_progress.restart_recovery
         elif strategy.done:
+            emit_progress(
+                on_progress,
+                phase="complete",
+            )
             recovery = _recover_after_strategy_done_once(
                 adb=adb,
                 page=page,
                 network=network,
                 hit=hit,
                 stop_event=stop_event,
+                on_progress=on_progress,
             )
         elif hit:
+            emit_progress(
+                on_progress,
+                phase="hit_recovery",
+            )
             recovery = recover_after_hit_once(
                 adb=adb,
                 page=page,
                 network=network,
                 stop_event=stop_event,
+                on_progress=on_progress,
             )
         else:
+            emit_progress(
+                on_progress,
+                phase="miss_recovery",
+            )
             recovery = recover_after_miss_once(
                 adb=adb,
                 page=page,
                 network=network,
                 stop_event=stop_event,
+                on_progress=on_progress,
             )
 
         actual_progress.completed_recovery = recovery
@@ -444,6 +484,11 @@ def run_auto_probe_once(
     )
 
     next_cell = strategy.choose_next_cell()
+    emit_progress(
+        on_progress,
+        target_mode="next" if next_cell is not None else "none",
+        target_cell=next_cell,
+    )
 
     result = AutoProbeOnceResult(
         context=context,

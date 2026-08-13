@@ -14,6 +14,15 @@ from sonar import (
 )
 from sonar_config import GUI_CONFIG
 
+from .theme import (
+    BOARD_CELL_SCALE,
+    BOARD_SELECTED_WIDTH,
+    BOARD_SUNK_WIDTH,
+    PALETTE,
+    SPACING,
+    TYPOGRAPHY,
+)
+
 
 # =========================================================
 # 棋盘显示颜色
@@ -21,14 +30,14 @@ from sonar_config import GUI_CONFIG
 
 # 未探测和“下一步选择”都保持淡蓝底色；
 # 下一步选择额外使用高亮边框区分。
-_UNKNOWN_FILL = "#dbeafe"
-_MISS_FILL = "#94a3b8"
-_HIT_FILL = "#facc15"
+_UNKNOWN_FILL = PALETTE.board_unknown
+_MISS_FILL = PALETTE.board_miss
+_HIT_FILL = PALETTE.board_hit
 
-_GRID_OUTLINE = "#475569"
-_SELECTED_OUTLINE = "#0ea5e9"
-_SUNK_OUTLINE = "#f97316"
-_BOARD_OUTLINE = "#0f172a"
+_GRID_OUTLINE = PALETTE.board_grid
+_SELECTED_OUTLINE = PALETTE.board_selected
+_SUNK_OUTLINE = PALETTE.board_sunk
+_BOARD_OUTLINE = PALETTE.border_strong
 
 _STATE_COLORS = {
     CellState.UNKNOWN: _UNKNOWN_FILL,
@@ -79,7 +88,10 @@ class SonarBoardView(ttk.Frame):
         self._hover_cell: Cell | None = None
 
         self.info_var = tk.StringVar()
-        self.strategy_var = tk.StringVar()
+        self.strategy_mode_var = tk.StringVar(value="-")
+        self.remaining_var = tk.StringVar(value="-")
+        self.confirmed_var = tk.StringVar(value="0")
+        self.excluded_var = tk.StringVar(value="0")
         self.hover_var = tk.StringVar(
             value="移动鼠标到格子上，可查看逻辑坐标、模拟器坐标和当前状态"
         )
@@ -96,50 +108,78 @@ class SonarBoardView(ttk.Frame):
     # =========================================================
 
     def _build_ui(self) -> None:
-        header = ttk.Frame(self)
+        self.configure(style="Card.TFrame")
+
+        header = ttk.Frame(
+            self,
+            style="Card.TFrame",
+        )
         header.pack(
             fill=tk.X,
-            pady=(0, 4),
+            pady=(0, SPACING.sm),
         )
 
         ttk.Label(
             header,
             text="声纳棋盘",
-            font=("TkDefaultFont", 10, "bold"),
-        ).pack(
-            side=tk.LEFT,
-        )
+            style="BoardTitle.Card.TLabel",
+        ).pack(side=tk.LEFT)
 
         ttk.Label(
             header,
             textvariable=self.info_var,
-        ).pack(
-            side=tk.LEFT,
-            padx=(12, 0),
-        )
-
-        ttk.Label(
-            header,
-            textvariable=self.hover_var,
+            style="Muted.Card.TLabel",
         ).pack(
             side=tk.RIGHT,
         )
 
-        ttk.Label(
+        strategy_row = ttk.Frame(
             self,
-            textvariable=self.strategy_var,
-        ).pack(
-            fill=tk.X,
-            pady=(0, 6),
+            style="Card.TFrame",
         )
+        strategy_row.pack(
+            fill=tk.X,
+            pady=(0, SPACING.sm),
+        )
+
+        strategy_specs = (
+            ("策略", self.strategy_mode_var),
+            ("剩余潜艇", self.remaining_var),
+            ("已确认", self.confirmed_var),
+            ("已排除", self.excluded_var),
+        )
+
+        for index, (caption, variable) in enumerate(strategy_specs):
+            item = ttk.Frame(
+                strategy_row,
+                style="Card.TFrame",
+            )
+            item.grid(
+                row=0,
+                column=index,
+                sticky=tk.EW,
+                padx=(0, SPACING.md),
+            )
+            ttk.Label(
+                item,
+                text=caption,
+                style="MetricCaption.Card.TLabel",
+            ).pack(anchor=tk.W)
+            ttk.Label(
+                item,
+                textvariable=variable,
+                style="Card.TLabel",
+                font=TYPOGRAPHY.body_bold,
+            ).pack(anchor=tk.W)
+            strategy_row.columnconfigure(index, weight=1)
 
         self.canvas = tk.Canvas(
             self,
             width=GUI_CONFIG.board_view_width,
             height=GUI_CONFIG.board_view_height,
-            highlightthickness=1,
-            highlightbackground="#cbd5e1",
-            background="#f8fafc",
+            highlightthickness=0,
+            borderwidth=0,
+            background=PALETTE.surface_muted,
         )
 
         self.canvas.pack(
@@ -162,10 +202,31 @@ class SonarBoardView(ttk.Frame):
             self._on_mouse_leave,
         )
 
-        legend = ttk.Frame(self)
+        footer = ttk.Frame(
+            self,
+            style="Card.TFrame",
+        )
+        footer.pack(
+            fill=tk.X,
+            pady=(SPACING.sm, 0),
+        )
+
+        ttk.Label(
+            footer,
+            textvariable=self.hover_var,
+            style="Muted.Card.TLabel",
+        ).pack(
+            fill=tk.X,
+            anchor=tk.W,
+        )
+
+        legend = ttk.Frame(
+            footer,
+            style="Card.TFrame",
+        )
         legend.pack(
             fill=tk.X,
-            pady=(6, 0),
+            pady=(SPACING.xs, 0),
         )
 
         legend_items = (
@@ -180,8 +241,8 @@ class SonarBoardView(ttk.Frame):
             item = tk.Frame(
                 legend,
                 background=fill,
-                width=14,
-                height=14,
+                width=12,
+                height=12,
                 highlightbackground=border,
                 highlightcolor=border,
                 highlightthickness=thickness,
@@ -195,9 +256,10 @@ class SonarBoardView(ttk.Frame):
             ttk.Label(
                 legend,
                 text=text,
+                style="Muted.Card.TLabel",
             ).pack(
                 side=tk.LEFT,
-                padx=(0, 12),
+                padx=(0, SPACING.md),
             )
 
     # =========================================================
@@ -273,77 +335,38 @@ class SonarBoardView(ttk.Frame):
 
         self.info_var.set(
             f"{board_snapshot.grid_size}×{board_snapshot.grid_size} | "
-            f"潜艇 [{submarine_text}] | "
+            f"潜艇 [{submarine_text}] · "
             f"坐标映射 {board_snapshot.mapped_count}/{total}"
         )
 
         if strategy_snapshot is None:
-            self.strategy_var.set(
-                "策略：未绑定"
-            )
+            self.strategy_mode_var.set("未绑定")
+            self.remaining_var.set("-")
+            self.confirmed_var.set("0")
+            self.excluded_var.set("0")
             return
-
-        explored_count = sum(
-            state in (
-                CellState.MISS,
-                CellState.HIT,
-                CellState.SUNK,
-            )
-            for row in board_snapshot.states
-            for state in row
-        )
 
         mode_text = _MODE_TEXT.get(
             strategy_snapshot.mode,
             strategy_snapshot.mode,
         )
 
-        if strategy_snapshot.pending_cell is None:
-            next_text = "无"
-        else:
-            next_text = str(
-                strategy_snapshot.pending_cell
-            )
-
         if strategy_snapshot.remaining_submarines:
-            remaining_text = ",".join(
+            remaining_text = " / ".join(
                 str(length)
                 for length in strategy_snapshot.remaining_submarines
             )
         else:
             remaining_text = "无"
 
-        text = (
-            f"策略：{mode_text} | "
-            f"下一格 {next_text} | "
-            f"已探测 {explored_count} | "
-            f"已排除 {len(strategy_snapshot.excluded_cells)} | "
-            f"已确认 {len(strategy_snapshot.confirmed_ships)} | "
-            f"剩余 [{remaining_text}]"
+        self.strategy_mode_var.set(mode_text)
+        self.remaining_var.set(remaining_text)
+        self.confirmed_var.set(
+            str(len(strategy_snapshot.confirmed_ships))
         )
-
-        if strategy_snapshot.calculation_progress is not None:
-            percent = int(
-                max(
-                    0.0,
-                    min(
-                        1.0,
-                        strategy_snapshot.calculation_progress,
-                    ),
-                )
-                * 100
-            )
-
-            text += (
-                f" | 计算 {percent}%"
-            )
-
-            if strategy_snapshot.calculation_status:
-                text += (
-                    f" {strategy_snapshot.calculation_status}"
-                )
-
-        self.strategy_var.set(text)
+        self.excluded_var.set(
+            str(len(strategy_snapshot.excluded_cells))
+        )
 
     # =========================================================
     # 菱形棋盘绘制
@@ -359,11 +382,11 @@ class SonarBoardView(ttk.Frame):
 
         width = max(
             self.canvas.winfo_width(),
-            GUI_CONFIG.board_view_width,
+            200,
         )
         height = max(
             self.canvas.winfo_height(),
-            GUI_CONFIG.board_view_height,
+            180,
         )
 
         padding = GUI_CONFIG.board_view_padding
@@ -419,6 +442,7 @@ class SonarBoardView(ttk.Frame):
                     top_y=top_y,
                     cell_width=cell_width,
                     cell_height=cell_height,
+                    scale=BOARD_CELL_SCALE,
                 )
 
                 state = snapshot.states[row][col]
@@ -445,7 +469,7 @@ class SonarBoardView(ttk.Frame):
                 )
 
                 outline_width = (
-                    3
+                    BOARD_SELECTED_WIDTH
                     if is_selected
                     else 1
                 )
@@ -470,8 +494,8 @@ class SonarBoardView(ttk.Frame):
                         center[0],
                         center[1],
                         text=f"{row + 1},{col + 1}",
-                        fill="#0f172a",
-                        font=("TkDefaultFont", 7),
+                        fill=PALETTE.text_muted,
+                        font=(TYPOGRAPHY.family, 7),
                         tags=("cell-label",),
                     )
 
@@ -500,7 +524,7 @@ class SonarBoardView(ttk.Frame):
             *left,
             fill="",
             outline=_BOARD_OUTLINE,
-            width=2,
+            width=1,
             tags=("board-outline",),
         )
 
@@ -649,7 +673,7 @@ class SonarBoardView(ttk.Frame):
                     end[0],
                     end[1],
                     fill=_SUNK_OUTLINE,
-                    width=4,
+                    width=BOARD_SUNK_WIDTH,
                     capstyle=tk.ROUND,
                     tags=("confirmed-ship-outline",),
                 )
@@ -707,6 +731,7 @@ class SonarBoardView(ttk.Frame):
         top_y: float,
         cell_width: float,
         cell_height: float,
+        scale: float = 1.0,
     ) -> tuple[float, ...]:
         p_top = self._grid_point(
             row,
@@ -744,12 +769,31 @@ class SonarBoardView(ttk.Frame):
             cell_height,
         )
 
-        return (
+        points = (
             p_top[0], p_top[1],
             p_right[0], p_right[1],
             p_bottom[0], p_bottom[1],
             p_left[0], p_left[1],
         )
+
+        if scale >= 0.999:
+            return points
+
+        center = self._cell_center(points)
+        scaled: list[float] = []
+
+        for x, y in zip(
+            points[0::2],
+            points[1::2],
+        ):
+            scaled.extend(
+                (
+                    center[0] + (x - center[0]) * scale,
+                    center[1] + (y - center[1]) * scale,
+                )
+            )
+
+        return tuple(scaled)
 
     @staticmethod
     def _cell_center(

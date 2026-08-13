@@ -28,6 +28,10 @@ from .sonar_page import (
     SonarPageState,
     detect_sonar_page_state,
 )
+from .progress import (
+    ProgressCallback,
+    emit_progress,
+)
 
 
 logger = get_logger(__name__)
@@ -185,6 +189,7 @@ def recover_after_hit_once(
     network: NetworkController,
     *,
     stop_event: Event | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> ProbeRecoveryResult:
     """HIT 后恢复联网等待，再整理到下一发弱网状态。"""
     raise_if_stop_requested(
@@ -196,6 +201,11 @@ def recover_after_hit_once(
     )
 
     state = network.get_state()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=state.weak_enabled,
+        reject_network_enabled=state.reject_enabled,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -212,6 +222,11 @@ def recover_after_hit_once(
         )
 
     network.restore_network()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=False,
+        reject_network_enabled=False,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -236,9 +251,15 @@ def recover_after_hit_once(
         page=page,
         network=network,
         stop_event=stop_event,
+        on_progress=on_progress,
     )
 
     final_network = network.get_state()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=final_network.weak_enabled,
+        reject_network_enabled=final_network.reject_enabled,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -247,6 +268,7 @@ def recover_after_hit_once(
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
+        on_progress=on_progress,
     )
 
     if (
@@ -297,6 +319,7 @@ def _recover_after_strategy_done_once(
     *,
     hit: bool,
     stop_event: Event | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> ProbeRecoveryResult:
     """策略完成时提交最后结果并保持正常联网。"""
     raise_if_stop_requested(
@@ -308,6 +331,11 @@ def _recover_after_strategy_done_once(
     )
 
     network.restore_network()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=False,
+        reject_network_enabled=False,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -327,6 +355,11 @@ def _recover_after_strategy_done_once(
         )
 
     final_network = network.get_state()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=final_network.weak_enabled,
+        reject_network_enabled=final_network.reject_enabled,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -335,6 +368,7 @@ def _recover_after_strategy_done_once(
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
+        on_progress=on_progress,
     )
 
     result = ProbeRecoveryResult(
@@ -361,6 +395,7 @@ def recover_after_miss_once(
     network: NetworkController,
     *,
     stop_event: Event | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> ProbeRecoveryResult:
     """执行 MISS 后的 REJECT、retry、联网和页面恢复链。"""
     raise_if_stop_requested(
@@ -372,6 +407,11 @@ def recover_after_miss_once(
     )
 
     state = network.get_state()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=state.weak_enabled,
+        reject_network_enabled=state.reject_enabled,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -395,6 +435,11 @@ def recover_after_miss_once(
     try:
         network.enable_reject_network()
         reject_enabled_by_flow = True
+        emit_progress(
+            on_progress,
+            weak_network_enabled=True,
+            reject_network_enabled=True,
+        )
 
         raise_if_stop_requested(
             stop_event
@@ -414,6 +459,10 @@ def recover_after_miss_once(
         if reject_enabled_by_flow:
             try:
                 network.disable_reject_network()
+                emit_progress(
+                    on_progress,
+                    reject_network_enabled=False,
+                )
             except Exception:
                 logger.exception(
                     "等待 retry 结束后关闭 REJECT 失败"
@@ -425,6 +474,10 @@ def recover_after_miss_once(
     if reject_enabled_by_flow:
         network.disable_reject_network()
         reject_enabled_by_flow = False
+        emit_progress(
+            on_progress,
+            reject_network_enabled=False,
+        )
 
     raise_if_stop_requested(
         stop_event
@@ -466,6 +519,11 @@ def recover_after_miss_once(
     )
 
     network.disable_weak_network()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=False,
+        reject_network_enabled=False,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -476,9 +534,15 @@ def recover_after_miss_once(
         page=page,
         network=network,
         stop_event=stop_event,
+        on_progress=on_progress,
     )
 
     final_network = network.get_state()
+    emit_progress(
+        on_progress,
+        weak_network_enabled=final_network.weak_enabled,
+        reject_network_enabled=final_network.reject_enabled,
+    )
 
     raise_if_stop_requested(
         stop_event
@@ -487,6 +551,7 @@ def recover_after_miss_once(
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
+        on_progress=on_progress,
     )
 
     if (

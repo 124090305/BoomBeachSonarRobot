@@ -39,6 +39,7 @@ from .sonar_page import (
     wait_home_island_ready,
     wait_sonar_ready,
 )
+from .progress import AutoProbeStatusEvent
 from stop_control import StopRequestedError
 
 
@@ -47,6 +48,7 @@ __all__ = [
     "AutoProbeCommittedResult",
     "AutoProbeLoopSummary",
     "AutoProbeOnceResult",
+    "AutoProbeStatusEvent",
     "ManualProbeResult",
     "ProbeContext",
     "ProbeRecoveryResult",
