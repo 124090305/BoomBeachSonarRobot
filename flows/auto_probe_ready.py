@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from threading import Event
+
 import config
 
 from controllers.adb_controller import AdbController
 from controllers.network_controller import NetworkController
 from controllers.page_controller import PageController
 from logger import get_logger
+from stop_control import raise_if_stop_requested
 
 from .activity_flow import enter_activity_initial
 from .sonar_page import (
@@ -21,12 +24,26 @@ def ensure_auto_probe_ready(
     adb: AdbController,
     page: PageController,
     network: NetworkController,
+    *,
+    stop_event: Event | None = None,
 ) -> None:
     """整理到活动详情页、弱网开启、REJECT 关闭的探测状态。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     config.ensure_directories()
     adb.ensure_device_online()
 
+    raise_if_stop_requested(
+        stop_event
+    )
+
     network_state = network.get_state()
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     if network_state.reject_enabled:
         raise RuntimeError(
@@ -35,21 +52,31 @@ def ensure_auto_probe_ready(
         )
 
     page_state = detect_sonar_page_state(
-        page
+        page,
+        stop_event=stop_event,
     )
 
     if page_state == SonarPageState.ACTIVITY_DETAIL:
         if not network_state.weak_enabled:
             network.enable_weak_network()
 
+            raise_if_stop_requested(
+                stop_event
+            )
+
     else:
         if network_state.weak_enabled:
             network.disable_weak_network()
+
+            raise_if_stop_requested(
+                stop_event
+            )
 
         entry = enter_activity_initial(
             adb=adb,
             page=page,
             network=network,
+            stop_event=stop_event,
         )
 
         if (
@@ -62,8 +89,14 @@ def ensure_auto_probe_ready(
             )
 
     final_network = network.get_state()
+
+    raise_if_stop_requested(
+        stop_event
+    )
+
     final_page = detect_sonar_page_state(
-        page
+        page,
+        stop_event=stop_event,
     )
 
     if (

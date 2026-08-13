@@ -4,6 +4,7 @@ import queue
 import threading
 
 from flows import (
+    AutoProbeCommittedResult,
     AutoProbeOnceResult,
     run_auto_probe_loop,
 )
@@ -71,7 +72,7 @@ class AutoProbeLoopBridge:
 
     def wait(
         self,
-        timeout: float,
+        timeout: float | None,
     ) -> bool:
         """等待后台线程结束，返回是否已经结束。"""
         thread = self.thread
@@ -82,26 +83,40 @@ class AutoProbeLoopBridge:
         thread.join(timeout=timeout)
         return not thread.is_alive()
 
+    def shutdown_and_restore_network(self) -> None:
+        """关闭程序时等待后台退出，再独占恢复网络。"""
+        self.request_stop()
+        self.wait(timeout=None)
+
+        context = self.context
+
+        with context.control_lock:
+            context.network.restore_network()
+
     def _worker(self) -> None:
         context = self.context
 
         try:
-            summary = run_auto_probe_loop(
-                adb=context.adb,
-                page=context.page,
-                network=context.network,
-                board=context.board,
-                strategy=context.strategy,
-                game=context.game,
-                stop_event=self.stop_event,
-                on_round=self._queue_round,
-            )
+            with context.control_lock:
+                summary = run_auto_probe_loop(
+                    adb=context.adb,
+                    page=context.page,
+                    network=context.network,
+                    board=context.board,
+                    strategy=context.strategy,
+                    game=context.game,
+                    stop_event=self.stop_event,
+                    on_round=self._queue_round,
+                    on_result=self._queue_result,
+                )
 
-            context.network.restore_network()
+                if summary.stop_reason != "requested":
+                    context.network.restore_network()
 
         except Exception as exc:
             try:
-                context.network.restore_network()
+                with context.control_lock:
+                    context.network.restore_network()
             except Exception:
                 logger.exception(
                     "自动循环异常退出后的网络清理失败"
@@ -119,6 +134,15 @@ class AutoProbeLoopBridge:
     ) -> None:
         self.events.put(
             ("round", (index, result))
+        )
+
+    def _queue_result(
+        self,
+        index: int,
+        result: AutoProbeCommittedResult,
+    ) -> None:
+        self.events.put(
+            ("result", (index, result))
         )
 
 

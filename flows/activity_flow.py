@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Event
 
 import config
 
@@ -10,6 +11,11 @@ from controllers.page_controller import PageController
 from logger import get_logger
 from sonar import Point
 from sonar_config import ACTIVITY_PAGE_CONFIG
+from stop_control import (
+    StopRequestedError,
+    interruptible_wait,
+    raise_if_stop_requested,
+)
 
 from .sonar_page import (
     SonarPageState,
@@ -34,11 +40,14 @@ class ActivityEntryResult:
 
 def dismiss_activity_start_hint(
     page: PageController,
+    *,
+    stop_event: Event | None = None,
 ) -> None:
     """点击棋盘外安全点，关闭“点击任意地方开始”提示。"""
-    page.adb.delay(
+    interruptible_wait(
         ACTIVITY_PAGE_CONFIG
-        .activity_tap_to_start_delay
+        .activity_tap_to_start_delay,
+        stop_event,
     )
 
     x, y = (
@@ -53,6 +62,7 @@ def dismiss_activity_start_hint(
             ACTIVITY_PAGE_CONFIG
             .activity_tap_to_start_after_delay
         ),
+        stop_event=stop_event,
     )
 
     logger.info(
@@ -67,19 +77,34 @@ def enter_activity_initial(
     adb: AdbController,
     page: PageController,
     network: NetworkController,
+    *,
+    stop_event: Event | None = None,
 ) -> ActivityEntryResult:
     """从主岛初次进入声纳活动。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     config.ensure_directories()
     adb.ensure_device_online()
 
+    raise_if_stop_requested(
+        stop_event
+    )
+
     initial_state = (
         detect_sonar_page_state(
-            page
+            page,
+            stop_event=stop_event,
         )
     )
 
     network_state = (
         network.get_state()
+    )
+
+    raise_if_stop_requested(
+        stop_event
     )
 
     if network_state.reject_enabled:
@@ -99,9 +124,14 @@ def enter_activity_initial(
                 network.enable_weak_network()
                 weak_enabled_by_flow = True
 
+                raise_if_stop_requested(
+                    stop_event
+                )
+
             final_state = (
                 detect_sonar_page_state(
-                    page
+                    page,
+                    stop_event=stop_event,
                 )
             )
 
@@ -113,7 +143,8 @@ def enter_activity_initial(
             )
 
         sonar_match = wait_sonar_ready(
-            page
+            page,
+            stop_event=stop_event,
         )
 
         if sonar_match is None:
@@ -134,6 +165,7 @@ def enter_activity_initial(
                     ACTIVITY_PAGE_CONFIG
                     .activity_button_click_delay
                 ),
+                stop_event=stop_event,
             )
         )
 
@@ -154,14 +186,20 @@ def enter_activity_initial(
             network.enable_weak_network()
             weak_enabled_by_flow = True
 
-        adb.delay(
-            ACTIVITY_PAGE_CONFIG
-            .initial_weak_apply_delay
+        raise_if_stop_requested(
+            stop_event
         )
 
-        adb.delay(
+        interruptible_wait(
             ACTIVITY_PAGE_CONFIG
-            .activity_list_before_swipe_delay
+            .initial_weak_apply_delay,
+            stop_event,
+        )
+
+        interruptible_wait(
+            ACTIVITY_PAGE_CONFIG
+            .activity_list_before_swipe_delay,
+            stop_event,
         )
 
         start_x, start_y = (
@@ -197,11 +235,13 @@ def enter_activity_initial(
                     ACTIVITY_PAGE_CONFIG
                     .activity_list_swipe_interval
                 ),
+                stop_event=stop_event,
             )
 
-        adb.delay(
+        interruptible_wait(
             ACTIVITY_PAGE_CONFIG
-            .activity_detail_entry_delay
+            .activity_detail_entry_delay,
+            stop_event,
         )
 
         detail_x, detail_y = (
@@ -213,6 +253,7 @@ def enter_activity_initial(
             detail_x,
             detail_y,
             wait_seconds=0,
+            stop_event=stop_event,
         )
 
         logger.info(
@@ -229,6 +270,7 @@ def enter_activity_initial(
                     ACTIVITY_PAGE_CONFIG
                     .activity_detail_ready_timeout
                 ),
+                stop_event=stop_event,
             )
         )
 
@@ -239,12 +281,14 @@ def enter_activity_initial(
             )
 
         dismiss_activity_start_hint(
-            page
+            page,
+            stop_event=stop_event,
         )
 
         final_state = (
             detect_sonar_page_state(
-                page
+                page,
+                stop_event=stop_event,
             )
         )
 
@@ -259,6 +303,10 @@ def enter_activity_initial(
 
         current_network_state = (
             network.get_state()
+        )
+
+        raise_if_stop_requested(
+            stop_event
         )
 
         if not current_network_state.weak_enabled:
@@ -290,6 +338,9 @@ def enter_activity_initial(
 
         return result
 
+    except StopRequestedError:
+        raise
+
     except Exception:
         if weak_enabled_by_flow:
             try:
@@ -306,8 +357,14 @@ def enter_activity_initial(
 def reenter_activity_for_probe(
     adb: AdbController,
     page: PageController,
+    *,
+    stop_event: Event | None = None,
 ) -> None:
     """退出活动详情后重新进入当前声纳活动。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     logger.info(
         "开始重新进入声纳活动"
     )
@@ -318,6 +375,7 @@ def reenter_activity_for_probe(
         wait_seconds=(
             ACTIVITY_PAGE_CONFIG.activity_button_click_delay
         ),
+        stop_event=stop_event,
     )
 
     if activity_match is None:
@@ -332,8 +390,9 @@ def reenter_activity_for_probe(
         activity_match.score,
     )
 
-    adb.delay(
-        ACTIVITY_PAGE_CONFIG.activity_detail_entry_delay
+    interruptible_wait(
+        ACTIVITY_PAGE_CONFIG.activity_detail_entry_delay,
+        stop_event,
     )
 
     detail_x, detail_y = (
@@ -344,6 +403,7 @@ def reenter_activity_for_probe(
         detail_x,
         detail_y,
         wait_seconds=0,
+        stop_event=stop_event,
     )
 
     logger.info(
@@ -357,6 +417,7 @@ def reenter_activity_for_probe(
         timeout=(
             ACTIVITY_PAGE_CONFIG.activity_detail_ready_timeout
         ),
+        stop_event=stop_event,
     )
 
     if not ready:
@@ -366,7 +427,8 @@ def reenter_activity_for_probe(
         )
 
     dismiss_activity_start_hint(
-        page
+        page,
+        stop_event=stop_event,
     )
 
     logger.info(

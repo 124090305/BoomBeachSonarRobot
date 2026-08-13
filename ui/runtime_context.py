@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 import config
@@ -28,6 +29,7 @@ class AppRuntimeContext:
     game: GameController
     board: SonarBoard
     strategy: SonarStrategy
+    control_lock: threading.Lock
 
     @classmethod
     def create(
@@ -81,6 +83,7 @@ class AppRuntimeContext:
             game=game,
             board=actual_board,
             strategy=actual_strategy,
+            control_lock=threading.Lock(),
         )
 
     def with_device(

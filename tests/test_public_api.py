@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+import config
 import flows
 from flows import activity_flow, auto_probe_flow, probe_flow, screenshot_flow
 from sonar_config import (
@@ -38,6 +39,15 @@ class PublicApiTests(unittest.TestCase):
         self.assertEqual(AUTO_PROBE_CONFIG.max_restart_attempts, 3)
         self.assertGreater(AUTO_PROBE_CONFIG.hit_online_wait_seconds, 0)
         self.assertGreater(GUI_CONFIG.board_view_width, 0)
+        self.assertGreater(config.STOP_POLL_INTERVAL, 0)
+
+    def test_stop_signal_is_public(self) -> None:
+        self.assertTrue(
+            issubclass(flows.StopRequestedError, Exception)
+        )
+        self.assertFalse(
+            issubclass(flows.StopRequestedError, RuntimeError)
+        )
 
     def test_gui_uses_descriptive_class_name(self) -> None:
         self.assertEqual(BoomBeachSonarApp.__name__, "BoomBeachSonarApp")

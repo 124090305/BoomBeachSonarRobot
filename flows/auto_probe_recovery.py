@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 
 import cv2
 
@@ -14,6 +15,11 @@ from controllers.network_controller import NetworkController
 from controllers.page_controller import PageController
 from logger import get_logger
 from sonar_config import AUTO_PROBE_CONFIG
+from stop_control import (
+    StopRequestedError,
+    interruptible_wait,
+    raise_if_stop_requested,
+)
 from vision import MatchResult, find_template_with_score
 
 from .activity_flow import enter_activity_initial
@@ -40,8 +46,14 @@ class ProbeRecoveryResult:
 
 def wait_retry_with_failure_capture(
     adb: AdbController,
+    *,
+    stop_event: Event | None = None,
 ) -> tuple[MatchResult | None, Path | None]:
     """等待 retry；超时时保存相似度最高的一帧。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     template_path = (
         config.TEMPLATE_DIR
         / AUTO_PROBE_CONFIG.retry_template
@@ -75,6 +87,10 @@ def wait_retry_with_failure_capture(
     )
 
     while True:
+        raise_if_stop_requested(
+            stop_event
+        )
+
         attempts += 1
         screenshot = adb.read_screenshot()
 
@@ -82,6 +98,10 @@ def wait_retry_with_failure_capture(
             screenshot,
             template_path,
             threshold=threshold,
+        )
+
+        raise_if_stop_requested(
+            stop_event
         )
 
         if (
@@ -150,11 +170,12 @@ def wait_retry_with_failure_capture(
 
             return None, failure_path
 
-        adb.delay(
+        interruptible_wait(
             min(
                 poll_interval,
                 remaining,
-            )
+            ),
+            stop_event,
         )
 
 
@@ -162,13 +183,23 @@ def recover_after_hit_once(
     adb: AdbController,
     page: PageController,
     network: NetworkController,
+    *,
+    stop_event: Event | None = None,
 ) -> ProbeRecoveryResult:
     """HIT 后恢复联网等待，再整理到下一发弱网状态。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     logger.info(
         "检测到 HIT：跳过 REJECT/retry，直接恢复正常联网"
     )
 
     state = network.get_state()
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     if state.reject_enabled:
         raise RuntimeError(
@@ -182,6 +213,10 @@ def recover_after_hit_once(
 
     network.restore_network()
 
+    raise_if_stop_requested(
+        stop_event
+    )
+
     online_wait = float(
         AUTO_PROBE_CONFIG.hit_online_wait_seconds
     )
@@ -191,17 +226,27 @@ def recover_after_hit_once(
         online_wait,
     )
 
-    adb.delay(online_wait)
+    interruptible_wait(
+        online_wait,
+        stop_event,
+    )
 
     ensure_auto_probe_ready(
         adb=adb,
         page=page,
         network=network,
+        stop_event=stop_event,
     )
 
     final_network = network.get_state()
+
+    raise_if_stop_requested(
+        stop_event
+    )
+
     final_state = detect_sonar_page_state(
-        page
+        page,
+        stop_event=stop_event,
     )
 
     if (
@@ -251,13 +296,22 @@ def _recover_after_strategy_done_once(
     network: NetworkController,
     *,
     hit: bool,
+    stop_event: Event | None = None,
 ) -> ProbeRecoveryResult:
     """策略完成时提交最后结果并保持正常联网。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     logger.info(
         "策略已确认全部潜艇：进入胜利处理边界，停止重新弱网和重进活动"
     )
 
     network.restore_network()
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     if hit:
         online_wait = float(
@@ -267,10 +321,21 @@ def _recover_after_strategy_done_once(
             "最后一发 HIT 已恢复正常联网，等待 %.1f 秒完成结算",
             online_wait,
         )
-        adb.delay(online_wait)
+        interruptible_wait(
+            online_wait,
+            stop_event,
+        )
 
     final_network = network.get_state()
-    final_state = detect_sonar_page_state(page)
+
+    raise_if_stop_requested(
+        stop_event
+    )
+
+    final_state = detect_sonar_page_state(
+        page,
+        stop_event=stop_event,
+    )
 
     result = ProbeRecoveryResult(
         mode="strategy_done_online",
@@ -294,13 +359,23 @@ def recover_after_miss_once(
     adb: AdbController,
     page: PageController,
     network: NetworkController,
+    *,
+    stop_event: Event | None = None,
 ) -> ProbeRecoveryResult:
     """执行 MISS 后的 REJECT、retry、联网和页面恢复链。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     logger.info(
         "开始执行 MISS 恢复链"
     )
 
     state = network.get_state()
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     if state.reject_enabled:
         raise RuntimeError(
@@ -321,13 +396,21 @@ def recover_after_miss_once(
         network.enable_reject_network()
         reject_enabled_by_flow = True
 
+        raise_if_stop_requested(
+            stop_event
+        )
+
         retry_match, retry_failure_path = (
             wait_retry_with_failure_capture(
                 adb=adb,
+                stop_event=stop_event,
             )
         )
 
-    finally:
+    except StopRequestedError:
+        raise
+
+    except Exception:
         if reject_enabled_by_flow:
             try:
                 network.disable_reject_network()
@@ -336,6 +419,16 @@ def recover_after_miss_once(
                     "等待 retry 结束后关闭 REJECT 失败"
                 )
                 raise
+
+        raise
+
+    if reject_enabled_by_flow:
+        network.disable_reject_network()
+        reject_enabled_by_flow = False
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     if retry_match is None:
         logger.error(
@@ -349,8 +442,9 @@ def recover_after_miss_once(
             f"失败截图={retry_failure_path}"
         )
 
-    adb.delay(
-        AUTO_PROBE_CONFIG.retry_before_click_delay
+    interruptible_wait(
+        AUTO_PROBE_CONFIG.retry_before_click_delay,
+        stop_event,
     )
 
     page.click_match(
@@ -358,6 +452,11 @@ def recover_after_miss_once(
         wait_seconds=(
             AUTO_PROBE_CONFIG.retry_after_click_delay
         ),
+        stop_event=stop_event,
+    )
+
+    raise_if_stop_requested(
+        stop_event
     )
 
     logger.info(
@@ -368,15 +467,26 @@ def recover_after_miss_once(
 
     network.disable_weak_network()
 
+    raise_if_stop_requested(
+        stop_event
+    )
+
     entry = enter_activity_initial(
         adb=adb,
         page=page,
         network=network,
+        stop_event=stop_event,
     )
 
     final_network = network.get_state()
+
+    raise_if_stop_requested(
+        stop_event
+    )
+
     final_state = detect_sonar_page_state(
-        page
+        page,
+        stop_event=stop_event,
     )
 
     if (

@@ -251,6 +251,9 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def restart_game(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             self.game.restart_game()
             return "网络已恢复，游戏已重启"
@@ -265,6 +268,9 @@ class BoomBeachSonarApp(tk.Tk):
     # =========================================================
 
     def check_root(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             return self.network.get_root_info()
 
@@ -274,6 +280,9 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def enable_weak_network(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             self.network.enable_weak_network()
             return "弱网 DROP 已开启"
@@ -284,6 +293,9 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def disable_weak_network(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             self.network.disable_weak_network()
             return "弱网 DROP 已关闭"
@@ -294,6 +306,9 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def enable_reject_network(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             self.network.enable_reject_network()
             return "断网 REJECT 已开启"
@@ -304,6 +319,9 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def disable_reject_network(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             self.network.disable_reject_network()
             return "断网 REJECT 已关闭"
@@ -314,6 +332,9 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def restore_network(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             self.network.restore_network()
             return "游戏网络已恢复"
@@ -324,6 +345,9 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def check_network_state(self) -> None:
+        if not self._manual_control_available():
+            return
+
         def task() -> str:
             return self.network.get_state().to_text()
 
@@ -437,6 +461,17 @@ class BoomBeachSonarApp(tk.Tk):
     def _auto_loop_running(self) -> bool:
         return self._auto_loop_bridge.running
 
+    def _manual_control_available(self) -> bool:
+        """后台真正退出后才允许人工网络和重启操作。"""
+        if not self._auto_loop_running():
+            return True
+
+        messagebox.showwarning(
+            "自动循环仍在退出",
+            "请等待自动循环在安全点停止后再执行人工操作。",
+        )
+        return False
+
     def _set_auto_loop_running(
         self,
         running: bool,
@@ -465,7 +500,7 @@ class BoomBeachSonarApp(tk.Tk):
         self.status_var.set("自动循环启动中...")
         self._set_auto_loop_running(True)
         self._write_log(
-            "自动循环启动：将连续执行完整单发闭环；停止按钮会在当前发完整结束后停止。"
+            "自动循环启动：停止请求会在最近的安全可中断点生效。"
         )
         self._auto_loop_bridge.start()
 
@@ -475,9 +510,9 @@ class BoomBeachSonarApp(tk.Tk):
 
         self._auto_loop_bridge.request_stop()
         self.auto_loop_state_var.set("停止中")
-        self.status_var.set("已请求停止：等待当前发完整结束...")
+        self.status_var.set("已请求停止：等待当前小动作完成...")
         self._write_log(
-            "已请求停止自动循环：当前发会完整走完网络恢复链后停止。"
+            "已请求停止自动循环：后台将在最近可中断点退出并保留当前现场。"
         )
 
     def _drain_auto_loop_events(self) -> None:
@@ -488,7 +523,7 @@ class BoomBeachSonarApp(tk.Tk):
             except queue.Empty:
                 break
 
-            if kind == "round":
+            if kind == "result":
                 index, result = payload
                 result_text = "HIT" if result.hit else "MISS"
                 current = self.auto_loop_total_var.get()
@@ -516,11 +551,23 @@ class BoomBeachSonarApp(tk.Tk):
                     f"发数：{index} | HIT：{hits} | MISS：{misses}"
                 )
                 self.auto_loop_last_var.set(
+                    f"上一发：{result.context.cell} {result_text} | 结果已登记"
+                )
+                self.auto_loop_state_var.set("运行中")
+                self.status_var.set(
+                    f"自动循环运行中：第 {index} 发结果已登记"
+                )
+                continue
+
+            if kind == "round":
+                index, result = payload
+                result_text = "HIT" if result.hit else "MISS"
+                self.auto_loop_last_var.set(
                     f"上一发：{result.context.cell} {result_text} | 下一格：{result.next_cell}"
                 )
                 self.auto_loop_state_var.set("运行中")
                 self.status_var.set(
-                    f"自动循环运行中：第 {index} 发完成"
+                    f"自动循环运行中：第 {index} 发恢复完成"
                 )
                 continue
 
@@ -534,19 +581,25 @@ class BoomBeachSonarApp(tk.Tk):
 
                 if summary.stop_reason == "recovery_failed":
                     state_text = "异常恢复失败，已安全停止"
-                elif summary.strategy_done:
-                    state_text = "策略完成，等待胜利处理"
                 elif summary.stop_reason == "requested":
                     state_text = "已停止"
+                elif summary.strategy_done:
+                    state_text = "策略完成，等待胜利处理"
                 else:
                     state_text = f"已停止：{summary.stop_reason}"
 
                 self.auto_loop_state_var.set(state_text)
                 self.status_var.set(state_text)
+
+                if summary.stop_reason == "requested":
+                    network_text = "已保留当前页面和网络状态。"
+                else:
+                    network_text = "游戏网络已按安全退出流程处理。"
+
                 self._write_log(
                     "自动循环结束："
                     f"rounds={summary.rounds}，HIT={summary.hits}，MISS={summary.misses}，"
-                    f"reason={summary.stop_reason}；游戏网络已恢复正常。"
+                    f"reason={summary.stop_reason}；{network_text}"
                 )
                 continue
 
@@ -585,7 +638,7 @@ class BoomBeachSonarApp(tk.Tk):
             )
 
     def on_close(self) -> None:
-        """关闭程序前等待当前发并恢复网络。"""
+        """关闭程序前等待当前不可拆动作并恢复网络。"""
         if self._closing:
             return
 
@@ -595,21 +648,12 @@ class BoomBeachSonarApp(tk.Tk):
             "正在恢复网络并退出..."
         )
         self._write_log(
-            "窗口关闭：正在清理网络规则..."
+            "窗口关闭：等待自动线程退出后清理网络规则..."
         )
 
         def worker() -> None:
             try:
-                if self._auto_loop_bridge.running:
-                    finished = self._auto_loop_bridge.wait(
-                        timeout=65.0
-                    )
-                    if not finished:
-                        logger.warning(
-                            "关闭窗口时自动循环仍未结束，将继续执行退出网络清理"
-                        )
-
-                self.network.restore_network()
+                self._auto_loop_bridge.shutdown_and_restore_network()
             except Exception as exc:
                 message = (
                     "退出清理失败："
@@ -662,7 +706,10 @@ class BoomBeachSonarApp(tk.Tk):
 
         def worker() -> None:
             try:
-                message = task()
+                control_lock = self._runtime.control_lock
+
+                with control_lock:
+                    message = task()
             except Exception as exc:
                 self.after(
                     0,

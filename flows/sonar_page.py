@@ -3,12 +3,17 @@ from __future__ import annotations
 import time
 from enum import Enum
 from pathlib import Path
+from threading import Event
 
 import config
 
 from controllers.page_controller import PageController
 from logger import get_logger
 from sonar_config import ACTIVITY_PAGE_CONFIG
+from stop_control import (
+    interruptible_wait,
+    raise_if_stop_requested,
+)
 from vision.image_match import (
     MatchResult,
     find_template,
@@ -82,8 +87,14 @@ def _find_sonar_match(
 
 def detect_sonar_page_state(
     page: PageController,
+    *,
+    stop_event: Event | None = None,
 ) -> SonarPageState:
     """只截图检查当前声纳相关页面，不进行点击。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     screenshot = (
         page.adb.read_screenshot()
     )
@@ -100,6 +111,9 @@ def detect_sonar_page_state(
     )
 
     if quit_match is not None:
+        raise_if_stop_requested(
+            stop_event
+        )
         logger.info(
             "页面状态：活动详情页"
         )
@@ -114,6 +128,9 @@ def detect_sonar_page_state(
     )
 
     if sonar_match is not None:
+        raise_if_stop_requested(
+            stop_event
+        )
         logger.info(
             "页面状态：主岛，声纳已可见；"
             "中心=%s，相似度=%.3f",
@@ -137,6 +154,9 @@ def detect_sonar_page_state(
     )
 
     if activity_match is not None:
+        raise_if_stop_requested(
+            stop_event
+        )
         logger.info(
             "页面状态：主岛；"
             "活动按钮中心=%s；"
@@ -145,6 +165,10 @@ def detect_sonar_page_state(
             sonar_score,
         )
         return SonarPageState.HOME
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     logger.warning(
         "页面状态：未知；"
@@ -159,6 +183,8 @@ def detect_sonar_page_state(
 def wait_home_island_ready(
     page: PageController,
     timeout: float | None = None,
+    *,
+    stop_event: Event | None = None,
 ) -> bool:
     """等待主岛活动按钮出现。"""
     actual_timeout = (
@@ -175,6 +201,7 @@ def wait_home_island_ready(
         ACTIVITY_PAGE_CONFIG
         .activity_button_template,
         timeout=actual_timeout,
+        stop_event=stop_event,
     )
 
     if match is None:
@@ -194,6 +221,8 @@ def wait_home_island_ready(
 
 def swipe_home_up(
     page: PageController,
+    *,
+    stop_event: Event | None = None,
 ) -> None:
     """主岛向上拖动画面，露出海边声纳。"""
     start_x, start_y = (
@@ -216,12 +245,15 @@ def swipe_home_up(
             ACTIVITY_PAGE_CONFIG
             .home_swipe_duration_ms
         ),
+        stop_event=stop_event,
     )
 
 
 def wait_sonar_ready(
     page: PageController,
     timeout: float | None = None,
+    *,
+    stop_event: Event | None = None,
 ) -> MatchResult | None:
     """等待主岛就绪，并在必要时上划寻找声纳。"""
     actual_timeout = (
@@ -231,9 +263,14 @@ def wait_sonar_ready(
     )
 
     if not wait_home_island_ready(
-        page
+        page,
+        stop_event=stop_event,
     ):
         return None
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     screenshot = (
         page.adb.read_screenshot()
@@ -243,6 +280,10 @@ def wait_sonar_ready(
         _find_sonar_match(
             screenshot
         )
+    )
+
+    raise_if_stop_requested(
+        stop_event
     )
 
     if match is not None:
@@ -261,7 +302,8 @@ def wait_sonar_ready(
     )
 
     swipe_home_up(
-        page
+        page,
+        stop_event=stop_event,
     )
 
     deadline = (
@@ -273,6 +315,10 @@ def wait_sonar_ready(
     attempts = 0
 
     while True:
+        raise_if_stop_requested(
+            stop_event
+        )
+
         attempts += 1
 
         screenshot = (
@@ -283,6 +329,10 @@ def wait_sonar_ready(
             _find_sonar_match(
                 screenshot
             )
+        )
+
+        raise_if_stop_requested(
+            stop_event
         )
 
         best_score_seen = max(
@@ -317,17 +367,20 @@ def wait_sonar_ready(
             )
             return None
 
-        page.adb.delay(
+        interruptible_wait(
             min(
                 config.PAGE_POLL_INTERVAL,
                 remaining,
-            )
+            ),
+            stop_event,
         )
 
 
 def wait_activity_detail_ready(
     page: PageController,
     timeout: float | None = None,
+    *,
+    stop_event: Event | None = None,
 ) -> bool:
     """等待退出按钮出现，以确认活动详情页已就绪。"""
     actual_timeout = (
@@ -339,6 +392,7 @@ def wait_activity_detail_ready(
     match = page.wait_template(
         ACTIVITY_PAGE_CONFIG.quit_activity_template,
         timeout=actual_timeout,
+        stop_event=stop_event,
     )
 
     if match is None:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from threading import Event
+
 from controllers.adb_controller import AdbController
 from controllers.game_controller import GameController
 from controllers.network_controller import NetworkController
 from controllers.page_controller import PageController
 from logger import get_logger
 from sonar_config import AUTO_PROBE_CONFIG
+from stop_control import raise_if_stop_requested
 
 from .auto_probe_ready import ensure_auto_probe_ready
 from .auto_probe_recovery import ProbeRecoveryResult
@@ -26,6 +29,7 @@ def restart_auto_probe_once(
     *,
     attempt: int,
     max_attempts: int,
+    stop_event: Event | None = None,
 ) -> ProbeRecoveryResult:
     """复用游戏重启，并恢复到下一发可探测状态。"""
     logger.warning(
@@ -36,14 +40,26 @@ def restart_auto_probe_once(
 
     game.restart_game()
 
+    raise_if_stop_requested(
+        stop_event
+    )
+
     ensure_auto_probe_ready(
         adb=adb,
         page=page,
         network=network,
+        stop_event=stop_event,
     )
 
-    final_state = detect_sonar_page_state(page)
+    final_state = detect_sonar_page_state(
+        page,
+        stop_event=stop_event,
+    )
     final_network = network.get_state()
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     if final_state != SonarPageState.ACTIVITY_DETAIL:
         raise RuntimeError(

@@ -5,6 +5,7 @@ from .activity_flow import (
     reenter_activity_for_probe,
 )
 from .auto_probe_flow import (
+    AutoProbeCommittedResult,
     AutoProbeOnceResult,
     build_default_hit_config,
     is_hit_recognition_state,
@@ -38,10 +39,12 @@ from .sonar_page import (
     wait_home_island_ready,
     wait_sonar_ready,
 )
+from stop_control import StopRequestedError
 
 
 __all__ = [
     "ActivityEntryResult",
+    "AutoProbeCommittedResult",
     "AutoProbeLoopSummary",
     "AutoProbeOnceResult",
     "ManualProbeResult",
@@ -49,6 +52,7 @@ __all__ = [
     "ProbeRecoveryResult",
     "ScreenshotCheckResult",
     "SonarPageState",
+    "StopRequestedError",
     "build_default_hit_config",
     "detect_sonar_page_state",
     "dismiss_activity_start_hint",

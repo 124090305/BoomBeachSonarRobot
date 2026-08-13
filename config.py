@@ -51,6 +51,9 @@ REJECT_NETWORK_CHAIN = "BBSR_REJECTNET"
 
 NETWORK_APPLY_DELAY = 0.2
 
+# 自动流程在普通等待中的停止检查间隔。
+STOP_POLL_INTERVAL = 0.1
+
 
 def ensure_directories() -> None:
     """创建程序运行需要的目录。"""

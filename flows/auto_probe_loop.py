@@ -12,6 +12,10 @@ from controllers.page_controller import PageController
 from logger import get_logger
 from sonar import SonarBoard, SonarStrategy
 from sonar_config import AUTO_PROBE_CONFIG
+from stop_control import (
+    StopRequestedError,
+    raise_if_stop_requested,
+)
 from vision import DiamondHitConfig
 
 from .auto_probe_exception_recovery import (
@@ -19,6 +23,7 @@ from .auto_probe_exception_recovery import (
     restore_auto_probe_network_safely,
 )
 from .auto_probe_flow import (
+    AutoProbeCommittedResult,
     AutoProbeOnceResult,
     AutoProbeProgress,
     run_auto_probe_once,
@@ -41,6 +46,7 @@ class AutoProbeLoopSummary:
 
 
 RoundCallback = Callable[[int, AutoProbeOnceResult], None]
+ResultCallback = Callable[[int, AutoProbeCommittedResult], None]
 StatusCallback = Callable[[str], None]
 
 
@@ -59,6 +65,11 @@ def _run_once_with_restart_fallback(
     hit_config: DiamondHitConfig | None,
     output_dir: str | Path | None,
     recognition_index: int,
+    stop_event: Event | None,
+    on_result_committed: Callable[
+        [AutoProbeCommittedResult],
+        None,
+    ] | None,
 ) -> AutoProbeOnceResult:
     """执行当前一发，并在可恢复异常后按配置重启。"""
     max_attempts = int(
@@ -76,6 +87,10 @@ def _run_once_with_restart_fallback(
     last_error: Exception | None = None
 
     while True:
+        raise_if_stop_requested(
+            stop_event
+        )
+
         try:
             return run_auto_probe_once(
                 adb=adb,
@@ -87,8 +102,17 @@ def _run_once_with_restart_fallback(
                 output_dir=output_dir,
                 recognition_index=recognition_index,
                 progress=progress,
+                stop_event=stop_event,
+                on_result_committed=on_result_committed,
             )
+        except StopRequestedError:
+            raise
+
         except RuntimeError as exc:
+            raise_if_stop_requested(
+                stop_event
+            )
+
             last_error = exc
             logger.exception(
                 "自动探测当前发发生可恢复异常：%s",
@@ -98,6 +122,10 @@ def _run_once_with_restart_fallback(
         recovered = False
 
         while restart_attempts < max_attempts:
+            raise_if_stop_requested(
+                stop_event
+            )
+
             restart_attempts += 1
 
             try:
@@ -114,8 +142,16 @@ def _run_once_with_restart_fallback(
                     network=network,
                     attempt=restart_attempts,
                     max_attempts=max_attempts,
+                    stop_event=stop_event,
                 )
+            except StopRequestedError:
+                raise
+
             except Exception as exc:
+                raise_if_stop_requested(
+                    stop_event
+                )
+
                 last_error = exc
                 logger.exception(
                     "自动探测第 %s/%s 次异常重启恢复失败：%s",
@@ -161,6 +197,7 @@ def run_auto_probe_loop(
     hit_config: DiamondHitConfig | None = None,
     output_dir: str | Path | None = None,
     on_round: RoundCallback | None = None,
+    on_result: ResultCallback | None = None,
     on_status: StatusCallback | None = None,
     max_rounds: int | None = None,
 ) -> AutoProbeLoopSummary:
@@ -168,7 +205,7 @@ def run_auto_probe_loop(
     连续执行完整自动单发流程。
 
     停止规则：
-    1. 用户发出 stop_event：当前这一发完整结束后停止；
+    1. 用户发出 stop_event：当前不可拆小动作结束后停止；
     2. strategy.done：全部潜艇已确认后停止；
     3. max_rounds：仅用于调试限制轮数。
 
@@ -199,6 +236,31 @@ def run_auto_probe_loop(
             stop_reason = "strategy_done"
             break
 
+        round_committed = False
+
+        def record_committed_result(
+            committed: AutoProbeCommittedResult,
+        ) -> None:
+            nonlocal rounds, hits, misses, round_committed
+
+            if round_committed:
+                return
+
+            rounds += 1
+
+            if committed.hit:
+                hits += 1
+            else:
+                misses += 1
+
+            round_committed = True
+
+            if on_result is not None:
+                on_result(
+                    rounds,
+                    committed,
+                )
+
         try:
             result = _run_once_with_restart_fallback(
                 adb=adb,
@@ -210,7 +272,16 @@ def run_auto_probe_loop(
                 hit_config=hit_config,
                 output_dir=output_dir,
                 recognition_index=rounds,
+                stop_event=actual_stop_event,
+                on_result_committed=record_committed_result,
             )
+        except StopRequestedError:
+            logger.info(
+                "自动探测已在最近可中断点响应用户停止"
+            )
+            stop_reason = "requested"
+            break
+
         except AutoProbeRecoveryExhaustedError:
             logger.exception(
                 "自动探测连续循环已安全停止"
@@ -218,13 +289,17 @@ def run_auto_probe_loop(
             stop_reason = "recovery_failed"
             break
 
-        rounds += 1
-        last_result = result
+        if not round_committed:
+            rounds += 1
 
-        if result.hit:
-            hits += 1
-        else:
-            misses += 1
+            if result.hit:
+                hits += 1
+            else:
+                misses += 1
+
+            round_committed = True
+
+        last_result = result
 
         logger.info(
             "连续循环第 %s 发完成：cell=%s -> %s，next=%s",
@@ -236,6 +311,10 @@ def run_auto_probe_loop(
 
         if on_round is not None:
             on_round(rounds, result)
+
+        if actual_stop_event.is_set():
+            stop_reason = "requested"
+            break
 
         if max_rounds is not None and rounds >= int(max_rounds):
             stop_reason = "max_rounds"

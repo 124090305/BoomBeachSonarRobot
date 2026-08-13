@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
+from typing import Callable
 
 import config
 
@@ -19,6 +21,7 @@ from sonar_config import (
     ACTIVITY_PAGE_CONFIG,
     AUTO_PROBE_CONFIG,
 )
+from stop_control import raise_if_stop_requested
 from vision import (
     DiamondHitConfig,
     DiamondHitResult,
@@ -55,6 +58,22 @@ class AutoProbeOnceResult:
     next_cell: Cell | None
 
 
+@dataclass(frozen=True)
+class AutoProbeCommittedResult:
+    """HIT/MISS 已完成策略与棋盘同步的结果。"""
+
+    context: ProbeContext
+    recognition: DiamondHitResult
+    hit: bool
+    newly_confirmed: tuple[ConfirmedShip, ...]
+
+
+ResultCommittedCallback = Callable[
+    [AutoProbeCommittedResult],
+    None,
+]
+
+
 @dataclass
 class AutoProbeProgress:
     """一发自动探测跨异常重启保留的执行进度。"""
@@ -67,6 +86,7 @@ class AutoProbeProgress:
     hit: bool | None = None
     newly_confirmed: tuple[ConfirmedShip, ...] = ()
     result_committed: bool = False
+    result_notified: bool = False
     restart_recovery: ProbeRecoveryResult | None = None
     hit_replay_required: bool = False
     completed_recovery: ProbeRecoveryResult | None = None
@@ -83,6 +103,7 @@ class AutoProbeProgress:
             self.hit = None
             self.newly_confirmed = ()
             self.result_committed = False
+            self.result_notified = False
             self.restart_recovery = None
             self.hit_replay_required = False
             self.completed_recovery = None
@@ -133,6 +154,8 @@ def is_conclusive_recognition_state(
 def _replay_recognized_hit(
     page: PageController,
     context: ProbeContext,
+    *,
+    stop_event: Event | None = None,
 ) -> None:
     """重启回档后重新点击已识别的 HIT，等待后续联网提交。"""
     x, y = context.screen_point
@@ -150,81 +173,21 @@ def _replay_recognized_hit(
         wait_seconds=(
             ACTIVITY_PAGE_CONFIG.probe_after_click_delay
         ),
+        stop_event=stop_event,
     )
 
 
-def build_default_hit_config(
-    *,
-    debug: bool = True,
-    debug_dir: str | Path | None = None,
-) -> DiamondHitConfig:
-    """创建当前固定 10x10 关卡使用的命中识别参数。"""
-    actual_debug_dir = (
-        Path(debug_dir)
-        if debug_dir is not None
-        else (
-            config.SCREENSHOT_DIR
-            / AUTO_PROBE_CONFIG.diamond_debug_dir_name
-        )
-    )
-
-    return DiamondHitConfig(
-        diamond_w=AUTO_PROBE_CONFIG.diamond_w,
-        diamond_h=AUTO_PROBE_CONFIG.diamond_h,
-        search_radius=(
-            AUTO_PROBE_CONFIG.diamond_search_radius
-        ),
-        debug=bool(debug),
-        debug_dir=str(actual_debug_dir),
-    )
-
-
-def run_auto_probe_once(
+def _complete_recognition_and_sync(
     adb: AdbController,
-    page: PageController,
-    network: NetworkController,
-    board: SonarBoard,
     strategy: SonarStrategy,
+    context: ProbeContext,
+    actual_progress: AutoProbeProgress,
     *,
-    hit_config: DiamondHitConfig | None = None,
-    output_dir: str | Path | None = None,
-    recognition_index: int = 0,
-    progress: AutoProbeProgress | None = None,
-) -> AutoProbeOnceResult:
-    """执行一整发自动探测，并按结果完成对应恢复。"""
-    logger.info(
-        "开始完整自动单发探测"
-    )
-
-    ensure_auto_probe_ready(
-        adb=adb,
-        page=page,
-        network=network,
-    )
-
-    actual_progress = progress or AutoProbeProgress()
-
-    actual_output_dir = (
-        Path(output_dir)
-        if output_dir is not None
-        else (
-            config.SCREENSHOT_DIR
-            / AUTO_PROBE_CONFIG.auto_probe_dir_name
-        )
-    )
-
-    if actual_progress.context is None:
-        actual_progress.context = prepare_probe_once(
-            adb=adb,
-            page=page,
-            board=board,
-            strategy=strategy,
-            output_dir=actual_output_dir,
-            progress=actual_progress.probe,
-        )
-
-    context = actual_progress.context
-
+    hit_config: DiamondHitConfig | None,
+    recognition_index: int,
+    on_result_committed: ResultCommittedCallback | None,
+) -> None:
+    """完整完成识别、策略写入和棋盘同步，中间不检查停止。"""
     if actual_progress.recognition is None:
         before = adb.read_image(
             context.before_path
@@ -272,13 +235,6 @@ def run_auto_probe_once(
             "自动探测进度缺少 HIT/MISS 判断结果"
         )
 
-    if actual_progress.hit_replay_required:
-        _replay_recognized_hit(
-            page=page,
-            context=context,
-        )
-        actual_progress.hit_replay_required = False
-
     logger.info(
         "自动命中判断："
         "cell=%s，state=%s，confidence=%.3f，"
@@ -307,6 +263,137 @@ def run_auto_probe_once(
         )
         actual_progress.result_committed = True
 
+    if (
+        on_result_committed is not None
+        and not actual_progress.result_notified
+    ):
+        on_result_committed(
+            AutoProbeCommittedResult(
+                context=context,
+                recognition=recognition,
+                hit=hit,
+                newly_confirmed=(
+                    actual_progress.newly_confirmed
+                ),
+            )
+        )
+        actual_progress.result_notified = True
+
+
+def build_default_hit_config(
+    *,
+    debug: bool = True,
+    debug_dir: str | Path | None = None,
+) -> DiamondHitConfig:
+    """创建当前固定 10x10 关卡使用的命中识别参数。"""
+    actual_debug_dir = (
+        Path(debug_dir)
+        if debug_dir is not None
+        else (
+            config.SCREENSHOT_DIR
+            / AUTO_PROBE_CONFIG.diamond_debug_dir_name
+        )
+    )
+
+    return DiamondHitConfig(
+        diamond_w=AUTO_PROBE_CONFIG.diamond_w,
+        diamond_h=AUTO_PROBE_CONFIG.diamond_h,
+        search_radius=(
+            AUTO_PROBE_CONFIG.diamond_search_radius
+        ),
+        debug=bool(debug),
+        debug_dir=str(actual_debug_dir),
+    )
+
+
+def run_auto_probe_once(
+    adb: AdbController,
+    page: PageController,
+    network: NetworkController,
+    board: SonarBoard,
+    strategy: SonarStrategy,
+    *,
+    hit_config: DiamondHitConfig | None = None,
+    output_dir: str | Path | None = None,
+    recognition_index: int = 0,
+    progress: AutoProbeProgress | None = None,
+    stop_event: Event | None = None,
+    on_result_committed: ResultCommittedCallback | None = None,
+) -> AutoProbeOnceResult:
+    """执行一整发自动探测，并按结果完成对应恢复。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
+    logger.info(
+        "开始完整自动单发探测"
+    )
+
+    ensure_auto_probe_ready(
+        adb=adb,
+        page=page,
+        network=network,
+        stop_event=stop_event,
+    )
+
+    actual_progress = progress or AutoProbeProgress()
+
+    actual_output_dir = (
+        Path(output_dir)
+        if output_dir is not None
+        else (
+            config.SCREENSHOT_DIR
+            / AUTO_PROBE_CONFIG.auto_probe_dir_name
+        )
+    )
+
+    if actual_progress.context is None:
+        actual_progress.context = prepare_probe_once(
+            adb=adb,
+            page=page,
+            board=board,
+            strategy=strategy,
+            output_dir=actual_output_dir,
+            progress=actual_progress.probe,
+            stop_event=stop_event,
+        )
+
+    context = actual_progress.context
+
+    if actual_progress.hit_replay_required:
+        _replay_recognized_hit(
+            page=page,
+            context=context,
+            stop_event=stop_event,
+        )
+        actual_progress.hit_replay_required = False
+
+    raise_if_stop_requested(
+        stop_event
+    )
+
+    _complete_recognition_and_sync(
+        adb=adb,
+        strategy=strategy,
+        context=context,
+        actual_progress=actual_progress,
+        hit_config=hit_config,
+        recognition_index=recognition_index,
+        on_result_committed=on_result_committed,
+    )
+
+    raise_if_stop_requested(
+        stop_event
+    )
+
+    recognition = actual_progress.recognition
+    hit = actual_progress.hit
+
+    if recognition is None or hit is None:
+        raise RuntimeError(
+            "自动探测进度缺少 HIT/MISS 判断结果"
+        )
+
     newly_confirmed = actual_progress.newly_confirmed
 
     if newly_confirmed:
@@ -333,21 +420,28 @@ def run_auto_probe_once(
                 page=page,
                 network=network,
                 hit=hit,
+                stop_event=stop_event,
             )
         elif hit:
             recovery = recover_after_hit_once(
                 adb=adb,
                 page=page,
                 network=network,
+                stop_event=stop_event,
             )
         else:
             recovery = recover_after_miss_once(
                 adb=adb,
                 page=page,
                 network=network,
+                stop_event=stop_event,
             )
 
         actual_progress.completed_recovery = recovery
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     next_cell = strategy.choose_next_cell()
 
@@ -373,6 +467,7 @@ def run_auto_probe_once(
 
 
 __all__ = [
+    "AutoProbeCommittedResult",
     "AutoProbeOnceResult",
     "ProbeRecoveryResult",
     "build_default_hit_config",

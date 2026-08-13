@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from threading import Event
 from typing import Callable
 
 import config
 from controllers.adb_controller import AdbController
 from logger import get_logger
+from stop_control import (
+    interruptible_wait,
+    raise_if_stop_requested,
+)
 from vision.image_match import (
     MatchResult,
     find_template_with_score,
@@ -29,6 +34,7 @@ class PageController:
         wait_seconds: float = config.PAGE_ACTION_DELAY,
         *,
         after_click: Callable[[], None] | None = None,
+        stop_event: Event | None = None,
     ) -> None:
         """点击固定坐标，并等待页面响应。"""
         x = int(x)
@@ -36,6 +42,10 @@ class PageController:
 
         if x < 0 or y < 0:
             raise ValueError("点击坐标不能小于 0")
+
+        raise_if_stop_requested(
+            stop_event
+        )
 
         logger.debug(
             "点击坐标：(%s, %s)",
@@ -48,7 +58,10 @@ class PageController:
         if after_click is not None:
             after_click()
 
-        self._delay(wait_seconds)
+        self._delay(
+            wait_seconds,
+            stop_event=stop_event,
+        )
 
     def swipe(
         self,
@@ -58,12 +71,18 @@ class PageController:
         end_y: int,
         duration_ms: int = 300,
         wait_seconds: float = config.PAGE_ACTION_DELAY,
+        *,
+        stop_event: Event | None = None,
     ) -> None:
         """执行滑动，并等待页面响应。"""
         duration_ms = int(duration_ms)
 
         if duration_ms <= 0:
             raise ValueError("滑动时间必须大于 0")
+
+        raise_if_stop_requested(
+            stop_event
+        )
 
         logger.info(
             "页面滑动：(%s, %s) -> (%s, %s)，%sms",
@@ -82,14 +101,23 @@ class PageController:
             duration_ms,
         )
 
-        self._delay(wait_seconds)
+        self._delay(
+            wait_seconds,
+            stop_event=stop_event,
+        )
 
     def find_template(
         self,
         template_path: str | Path,
         threshold: float = config.DEFAULT_MATCH_THRESHOLD,
+        *,
+        stop_event: Event | None = None,
     ) -> MatchResult | None:
         """截取当前画面并查找模板。"""
+        raise_if_stop_requested(
+            stop_event
+        )
+
         template = self._resolve_template_path(template_path)
         screenshot = self.adb.read_screenshot()
 
@@ -97,6 +125,10 @@ class PageController:
             screenshot,
             template,
             threshold=threshold,
+        )
+
+        raise_if_stop_requested(
+            stop_event
         )
 
         if match is None:
@@ -120,12 +152,15 @@ class PageController:
         self,
         template_path: str | Path,
         threshold: float = config.DEFAULT_MATCH_THRESHOLD,
+        *,
+        stop_event: Event | None = None,
     ) -> bool:
         """判断模板当前是否出现在画面中。"""
         return (
             self.find_template(
                 template_path,
                 threshold=threshold,
+                stop_event=stop_event,
             )
             is not None
         )
@@ -136,6 +171,8 @@ class PageController:
         timeout: float = config.PAGE_WAIT_TIMEOUT,
         threshold: float = config.DEFAULT_MATCH_THRESHOLD,
         poll_interval: float = config.PAGE_POLL_INTERVAL,
+        *,
+        stop_event: Event | None = None,
     ) -> MatchResult | None:
         """反复截图，等待模板出现。"""
         timeout = float(timeout)
@@ -160,6 +197,10 @@ class PageController:
         )
 
         while True:
+            raise_if_stop_requested(
+                stop_event
+            )
+
             attempts += 1
 
             screenshot = self.adb.read_screenshot()
@@ -168,6 +209,10 @@ class PageController:
                 screenshot,
                 template,
                 threshold=threshold,
+            )
+
+            raise_if_stop_requested(
+                stop_event
             )
 
             best_score_seen = max(
@@ -208,8 +253,9 @@ class PageController:
                 best_score_seen,
             )
 
-            self.adb.delay(
-                min(poll_interval, remaining)
+            interruptible_wait(
+                min(poll_interval, remaining),
+                stop_event,
             )
 
     def click_template(
@@ -217,11 +263,14 @@ class PageController:
         template_path: str | Path,
         threshold: float = config.DEFAULT_MATCH_THRESHOLD,
         wait_seconds: float = config.PAGE_ACTION_DELAY,
+        *,
+        stop_event: Event | None = None,
     ) -> MatchResult | None:
         """查找模板并点击中心；找不到时返回 None。"""
         match = self.find_template(
             template_path,
             threshold=threshold,
+            stop_event=stop_event,
         )
 
         if match is None:
@@ -230,6 +279,7 @@ class PageController:
         self.click_match(
             match,
             wait_seconds=wait_seconds,
+            stop_event=stop_event,
         )
 
         return match
@@ -241,6 +291,8 @@ class PageController:
         threshold: float = config.DEFAULT_MATCH_THRESHOLD,
         poll_interval: float = config.PAGE_POLL_INTERVAL,
         wait_seconds: float = config.PAGE_ACTION_DELAY,
+        *,
+        stop_event: Event | None = None,
     ) -> MatchResult | None:
         """等待模板出现并点击中心；超时返回 None。"""
         match = self.wait_template(
@@ -248,6 +300,7 @@ class PageController:
             timeout=timeout,
             threshold=threshold,
             poll_interval=poll_interval,
+            stop_event=stop_event,
         )
 
         if match is None:
@@ -256,6 +309,7 @@ class PageController:
         self.click_match(
             match,
             wait_seconds=wait_seconds,
+            stop_event=stop_event,
         )
 
         return match
@@ -264,6 +318,8 @@ class PageController:
         self,
         match: MatchResult,
         wait_seconds: float = config.PAGE_ACTION_DELAY,
+        *,
+        stop_event: Event | None = None,
     ) -> None:
         """点击已经找到的匹配区域中心。"""
         x, y = match.center
@@ -279,6 +335,7 @@ class PageController:
             x,
             y,
             wait_seconds=wait_seconds,
+            stop_event=stop_event,
         )
 
     @staticmethod
@@ -310,7 +367,11 @@ class PageController:
         )
 
     @staticmethod
-    def _delay(seconds: float) -> None:
+    def _delay(
+        seconds: float,
+        *,
+        stop_event: Event | None = None,
+    ) -> None:
         """等待页面响应。"""
         seconds = float(seconds)
 
@@ -318,4 +379,7 @@ class PageController:
             raise ValueError("等待时间不能小于 0")
 
         if seconds > 0:
-            AdbController.delay(seconds)
+            interruptible_wait(
+                seconds,
+                stop_event,
+            )

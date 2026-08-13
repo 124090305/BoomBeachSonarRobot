@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from threading import Event
 
 import config
 
@@ -17,6 +18,7 @@ from sonar import (
     SonarStrategy,
 )
 from sonar_config import ACTIVITY_PAGE_CONFIG
+from stop_control import raise_if_stop_requested
 
 from .activity_flow import reenter_activity_for_probe
 from .sonar_page import (
@@ -99,14 +101,23 @@ def prepare_probe_once(
     strategy: SonarStrategy,
     output_dir: str | Path | None = None,
     progress: ProbeProgress | None = None,
+    stop_event: Event | None = None,
 ) -> ProbeContext:
     """执行一次真实单发探测所需的公共页面操作。"""
+    raise_if_stop_requested(
+        stop_event
+    )
+
     logger.info(
         "开始单发探测页面操作"
     )
 
     config.ensure_directories()
     adb.ensure_device_online()
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     if not board.has_complete_mapping:
         raise RuntimeError(
@@ -143,6 +154,10 @@ def prepare_probe_once(
     actual_progress.cell = cell
     actual_progress.screen_point = (x, y)
 
+    raise_if_stop_requested(
+        stop_event
+    )
+
     logger.info(
         "本次策略选格：逻辑格=%s，模拟器坐标=(%s, %s)",
         cell,
@@ -155,12 +170,14 @@ def prepare_probe_once(
         timeout=(
             ACTIVITY_PAGE_CONFIG.probe_detail_ready_timeout
         ),
+        stop_event=stop_event,
     )
 
     if not ready:
         current_state = (
             detect_sonar_page_state(
-                page
+                page,
+                stop_event=stop_event,
             )
         )
 
@@ -208,8 +225,16 @@ def prepare_probe_once(
         "点击目标格前截图"
     )
 
+    raise_if_stop_requested(
+        stop_event
+    )
+
     actual_progress.before_path = adb.take_screenshot(
         actual_progress.before_path
+    )
+
+    raise_if_stop_requested(
+        stop_event
     )
 
     logger.info(
@@ -228,6 +253,7 @@ def prepare_probe_once(
         after_click=(
             actual_progress.mark_click_committed
         ),
+        stop_event=stop_event,
     )
 
     logger.info(
@@ -236,6 +262,7 @@ def prepare_probe_once(
 
     quit_match = page.click_template(
         ACTIVITY_PAGE_CONFIG.quit_activity_template,
+        stop_event=stop_event,
     )
 
     if quit_match is None:
@@ -254,6 +281,7 @@ def prepare_probe_once(
     reenter_activity_for_probe(
         adb,
         page,
+        stop_event=stop_event,
     )
 
     logger.info(
@@ -264,6 +292,10 @@ def prepare_probe_once(
         actual_progress.after_path
     )
     actual_progress.after_captured = True
+
+    raise_if_stop_requested(
+        stop_event
+    )
 
     context = actual_progress.build_context()
 
