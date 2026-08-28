@@ -49,15 +49,6 @@ class PublicApiTests(unittest.TestCase):
             issubclass(flows.StopRequestedError, RuntimeError)
         )
 
-    def test_progress_event_is_public(self) -> None:
-        event = flows.AutoProbeStatusEvent(
-            phase="preparing_probe"
-        )
-        self.assertEqual(
-            event.phase,
-            "preparing_probe",
-        )
-
     def test_gui_uses_descriptive_class_name(self) -> None:
         self.assertEqual(BoomBeachSonarApp.__name__, "BoomBeachSonarApp")
 

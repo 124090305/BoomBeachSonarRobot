@@ -28,10 +28,6 @@ from .auto_probe_flow import (
     AutoProbeProgress,
     run_auto_probe_once,
 )
-from .progress import (
-    ProgressCallback,
-    emit_progress,
-)
 
 
 logger = get_logger(__name__)
@@ -74,7 +70,6 @@ def _run_once_with_restart_fallback(
         [AutoProbeCommittedResult],
         None,
     ] | None,
-    on_progress: ProgressCallback | None,
 ) -> AutoProbeOnceResult:
     """执行当前一发，并在可恢复异常后按配置重启。"""
     max_attempts = int(
@@ -109,7 +104,6 @@ def _run_once_with_restart_fallback(
                 progress=progress,
                 stop_event=stop_event,
                 on_result_committed=on_result_committed,
-                on_progress=on_progress,
             )
         except StopRequestedError:
             raise
@@ -149,7 +143,6 @@ def _run_once_with_restart_fallback(
                     attempt=restart_attempts,
                     max_attempts=max_attempts,
                     stop_event=stop_event,
-                    on_progress=on_progress,
                 )
             except StopRequestedError:
                 raise
@@ -206,7 +199,6 @@ def run_auto_probe_loop(
     on_round: RoundCallback | None = None,
     on_result: ResultCallback | None = None,
     on_status: StatusCallback | None = None,
-    on_progress: ProgressCallback | None = None,
     max_rounds: int | None = None,
 ) -> AutoProbeLoopSummary:
     """
@@ -235,20 +227,6 @@ def run_auto_probe_loop(
     if on_status is not None:
         on_status("running")
 
-    emit_progress(
-        on_progress,
-        loop_state="running",
-        phase="preparing_activity",
-        target_mode=(
-            "next"
-            if getattr(strategy, "pending_cell", None) is not None
-            else "none"
-        ),
-        target_cell=getattr(strategy, "pending_cell", None),
-        round_index=1,
-        recovery_attempt=0,
-    )
-
     while True:
         if actual_stop_event.is_set():
             stop_reason = "requested"
@@ -259,18 +237,6 @@ def run_auto_probe_loop(
             break
 
         round_committed = False
-        emit_progress(
-            on_progress,
-            loop_state="running",
-            phase="preparing_activity",
-            target_mode=(
-                "next"
-                if getattr(strategy, "pending_cell", None) is not None
-                else "none"
-            ),
-            target_cell=getattr(strategy, "pending_cell", None),
-            round_index=rounds + 1,
-        )
 
         def record_committed_result(
             committed: AutoProbeCommittedResult,
@@ -308,7 +274,6 @@ def run_auto_probe_loop(
                 recognition_index=rounds,
                 stop_event=actual_stop_event,
                 on_result_committed=record_committed_result,
-                on_progress=on_progress,
             )
         except StopRequestedError:
             logger.info(
@@ -347,17 +312,6 @@ def run_auto_probe_loop(
         if on_round is not None:
             on_round(rounds, result)
 
-        emit_progress(
-            on_progress,
-            target_mode=(
-                "next"
-                if result.next_cell is not None
-                else "none"
-            ),
-            target_cell=result.next_cell,
-            recovery_attempt=0,
-        )
-
         if actual_stop_event.is_set():
             stop_reason = "requested"
             break
@@ -386,31 +340,5 @@ def run_auto_probe_loop(
 
     if on_status is not None:
         on_status(stop_reason)
-
-    if stop_reason == "recovery_failed":
-        final_loop_state = "error"
-        final_phase = "exception_recovery"
-    elif summary.strategy_done or stop_reason == "strategy_done":
-        final_loop_state = "complete"
-        final_phase = "complete"
-    else:
-        final_loop_state = "stopped"
-        final_phase = None
-
-    emit_progress(
-        on_progress,
-        loop_state=final_loop_state,
-        phase=final_phase,
-        target_mode=(
-            "none"
-            if summary.strategy_done
-            else None
-        ),
-        round_index=(
-            summary.rounds
-            if summary.rounds > 0
-            else None
-        ),
-    )
 
     return summary

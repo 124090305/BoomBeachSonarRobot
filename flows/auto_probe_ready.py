@@ -15,10 +15,6 @@ from .sonar_page import (
     SonarPageState,
     detect_sonar_page_state,
 )
-from .progress import (
-    ProgressCallback,
-    emit_progress,
-)
 
 
 logger = get_logger(__name__)
@@ -30,7 +26,6 @@ def ensure_auto_probe_ready(
     network: NetworkController,
     *,
     stop_event: Event | None = None,
-    on_progress: ProgressCallback | None = None,
 ) -> None:
     """整理到活动详情页、弱网开启、REJECT 关闭的探测状态。"""
     raise_if_stop_requested(
@@ -39,22 +34,12 @@ def ensure_auto_probe_ready(
 
     config.ensure_directories()
     adb.ensure_device_online()
-    emit_progress(
-        on_progress,
-        device_online=True,
-        phase="preparing_activity",
-    )
 
     raise_if_stop_requested(
         stop_event
     )
 
     network_state = network.get_state()
-    emit_progress(
-        on_progress,
-        weak_network_enabled=network_state.weak_enabled,
-        reject_network_enabled=network_state.reject_enabled,
-    )
 
     raise_if_stop_requested(
         stop_event
@@ -69,17 +54,11 @@ def ensure_auto_probe_ready(
     page_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
-        on_progress=on_progress,
     )
 
     if page_state == SonarPageState.ACTIVITY_DETAIL:
         if not network_state.weak_enabled:
             network.enable_weak_network()
-            emit_progress(
-                on_progress,
-                weak_network_enabled=True,
-                reject_network_enabled=False,
-            )
 
             raise_if_stop_requested(
                 stop_event
@@ -88,10 +67,6 @@ def ensure_auto_probe_ready(
     else:
         if network_state.weak_enabled:
             network.disable_weak_network()
-            emit_progress(
-                on_progress,
-                weak_network_enabled=False,
-            )
 
             raise_if_stop_requested(
                 stop_event
@@ -102,7 +77,6 @@ def ensure_auto_probe_ready(
             page=page,
             network=network,
             stop_event=stop_event,
-            on_progress=on_progress,
         )
 
         if (
@@ -115,11 +89,6 @@ def ensure_auto_probe_ready(
             )
 
     final_network = network.get_state()
-    emit_progress(
-        on_progress,
-        weak_network_enabled=final_network.weak_enabled,
-        reject_network_enabled=final_network.reject_enabled,
-    )
 
     raise_if_stop_requested(
         stop_event
@@ -128,7 +97,6 @@ def ensure_auto_probe_ready(
     final_page = detect_sonar_page_state(
         page,
         stop_event=stop_event,
-        on_progress=on_progress,
     )
 
     if (

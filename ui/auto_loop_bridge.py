@@ -8,7 +8,6 @@ from flows import (
     AutoProbeOnceResult,
     run_auto_probe_loop,
 )
-from flows.progress import AutoProbeStatusEvent
 from logger import get_logger
 
 from .runtime_context import AppRuntimeContext
@@ -109,7 +108,6 @@ class AutoProbeLoopBridge:
                     stop_event=self.stop_event,
                     on_round=self._queue_round,
                     on_result=self._queue_result,
-                    on_progress=self._queue_status,
                 )
 
                 if summary.stop_reason != "requested":
@@ -145,14 +143,6 @@ class AutoProbeLoopBridge:
     ) -> None:
         self.events.put(
             ("result", (index, result))
-        )
-
-    def _queue_status(
-        self,
-        status: AutoProbeStatusEvent,
-    ) -> None:
-        self.events.put(
-            ("status", status)
         )
 
 

@@ -16,10 +16,6 @@ from .sonar_page import (
     SonarPageState,
     detect_sonar_page_state,
 )
-from .progress import (
-    ProgressCallback,
-    emit_progress,
-)
 
 
 logger = get_logger(__name__)
@@ -34,7 +30,6 @@ def restart_auto_probe_once(
     attempt: int,
     max_attempts: int,
     stop_event: Event | None = None,
-    on_progress: ProgressCallback | None = None,
 ) -> ProbeRecoveryResult:
     """复用游戏重启，并恢复到下一发可探测状态。"""
     logger.warning(
@@ -42,19 +37,8 @@ def restart_auto_probe_once(
         attempt,
         max_attempts,
     )
-    emit_progress(
-        on_progress,
-        phase="exception_recovery",
-        recovery_attempt=attempt,
-    )
 
     game.restart_game()
-    emit_progress(
-        on_progress,
-        device_online=True,
-        weak_network_enabled=False,
-        reject_network_enabled=False,
-    )
 
     raise_if_stop_requested(
         stop_event
@@ -65,20 +49,13 @@ def restart_auto_probe_once(
         page=page,
         network=network,
         stop_event=stop_event,
-        on_progress=on_progress,
     )
 
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
-        on_progress=on_progress,
     )
     final_network = network.get_state()
-    emit_progress(
-        on_progress,
-        weak_network_enabled=final_network.weak_enabled,
-        reject_network_enabled=final_network.reject_enabled,
-    )
 
     raise_if_stop_requested(
         stop_event

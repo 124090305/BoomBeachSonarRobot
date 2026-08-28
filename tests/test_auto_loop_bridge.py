@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from ui.auto_loop_bridge import AutoProbeLoopBridge
-from flows.progress import AutoProbeStatusEvent
 
 
 def bridge_context():
@@ -22,23 +21,6 @@ def bridge_context():
 
 
 class AutoLoopBridgeTests(unittest.TestCase):
-    def test_status_event_is_forwarded_without_translation(self) -> None:
-        bridge = AutoProbeLoopBridge(
-            bridge_context()
-        )
-        status = AutoProbeStatusEvent(
-            phase="judging_result",
-            target_mode="current",
-            target_cell=(2, 3),
-        )
-
-        bridge._queue_status(status)
-
-        self.assertEqual(
-            bridge.get_event_nowait(),
-            ("status", status),
-        )
-
     def test_requested_summary_preserves_network_state(self) -> None:
         context = bridge_context()
         bridge = AutoProbeLoopBridge(

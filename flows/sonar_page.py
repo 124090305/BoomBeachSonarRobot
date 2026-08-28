@@ -20,11 +20,6 @@ from vision.image_match import (
     find_template_with_score,
 )
 
-from .progress import (
-    ProgressCallback,
-    emit_progress,
-)
-
 
 logger = get_logger(__name__)
 
@@ -94,7 +89,6 @@ def detect_sonar_page_state(
     page: PageController,
     *,
     stop_event: Event | None = None,
-    on_progress: ProgressCallback | None = None,
 ) -> SonarPageState:
     """只截图检查当前声纳相关页面，不进行点击。"""
     raise_if_stop_requested(
@@ -123,10 +117,6 @@ def detect_sonar_page_state(
         logger.info(
             "页面状态：活动详情页"
         )
-        emit_progress(
-            on_progress,
-            page_state=SonarPageState.ACTIVITY_DETAIL.value,
-        )
         return (
             SonarPageState.ACTIVITY_DETAIL
         )
@@ -146,10 +136,6 @@ def detect_sonar_page_state(
             "中心=%s，相似度=%.3f",
             sonar_match.center,
             sonar_match.score,
-        )
-        emit_progress(
-            on_progress,
-            page_state=SonarPageState.HOME_SONAR_VISIBLE.value,
         )
         return (
             SonarPageState
@@ -178,10 +164,6 @@ def detect_sonar_page_state(
             activity_match.center,
             sonar_score,
         )
-        emit_progress(
-            on_progress,
-            page_state=SonarPageState.HOME.value,
-        )
         return SonarPageState.HOME
 
     raise_if_stop_requested(
@@ -195,11 +177,6 @@ def detect_sonar_page_state(
         sonar_score,
     )
 
-    emit_progress(
-        on_progress,
-        page_state=SonarPageState.UNKNOWN.value,
-    )
-
     return SonarPageState.UNKNOWN
 
 
@@ -208,7 +185,6 @@ def wait_home_island_ready(
     timeout: float | None = None,
     *,
     stop_event: Event | None = None,
-    on_progress: ProgressCallback | None = None,
 ) -> bool:
     """等待主岛活动按钮出现。"""
     actual_timeout = (
@@ -238,11 +214,6 @@ def wait_home_island_ready(
     logger.info(
         "主岛已就绪：活动按钮中心=%s",
         match.center,
-    )
-
-    emit_progress(
-        on_progress,
-        page_state=SonarPageState.HOME.value,
     )
 
     return True
@@ -283,7 +254,6 @@ def wait_sonar_ready(
     timeout: float | None = None,
     *,
     stop_event: Event | None = None,
-    on_progress: ProgressCallback | None = None,
 ) -> MatchResult | None:
     """等待主岛就绪，并在必要时上划寻找声纳。"""
     actual_timeout = (
@@ -295,7 +265,6 @@ def wait_sonar_ready(
     if not wait_home_island_ready(
         page,
         stop_event=stop_event,
-        on_progress=on_progress,
     ):
         return None
 
@@ -323,10 +292,6 @@ def wait_sonar_ready(
             "中心=%s，相似度=%.3f",
             match.center,
             match.score,
-        )
-        emit_progress(
-            on_progress,
-            page_state=SonarPageState.HOME_SONAR_VISIBLE.value,
         )
         return match
 
@@ -383,10 +348,6 @@ def wait_sonar_ready(
                 match.score,
                 attempts,
             )
-            emit_progress(
-                on_progress,
-                page_state=SonarPageState.HOME_SONAR_VISIBLE.value,
-            )
             return match
 
         remaining = (
@@ -420,7 +381,6 @@ def wait_activity_detail_ready(
     timeout: float | None = None,
     *,
     stop_event: Event | None = None,
-    on_progress: ProgressCallback | None = None,
 ) -> bool:
     """等待退出按钮出现，以确认活动详情页已就绪。"""
     actual_timeout = (
@@ -445,11 +405,6 @@ def wait_activity_detail_ready(
     logger.info(
         "活动详情页已就绪：退出按钮中心=%s",
         match.center,
-    )
-
-    emit_progress(
-        on_progress,
-        page_state=SonarPageState.ACTIVITY_DETAIL.value,
     )
 
     return True

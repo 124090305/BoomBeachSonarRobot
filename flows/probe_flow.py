@@ -25,10 +25,6 @@ from .sonar_page import (
     detect_sonar_page_state,
     wait_activity_detail_ready,
 )
-from .progress import (
-    ProgressCallback,
-    emit_progress,
-)
 
 
 logger = get_logger(__name__)
@@ -106,7 +102,6 @@ def prepare_probe_once(
     output_dir: str | Path | None = None,
     progress: ProbeProgress | None = None,
     stop_event: Event | None = None,
-    on_progress: ProgressCallback | None = None,
 ) -> ProbeContext:
     """执行一次真实单发探测所需的公共页面操作。"""
     raise_if_stop_requested(
@@ -119,11 +114,6 @@ def prepare_probe_once(
 
     config.ensure_directories()
     adb.ensure_device_online()
-    emit_progress(
-        on_progress,
-        device_online=True,
-        phase="preparing_probe",
-    )
 
     raise_if_stop_requested(
         stop_event
@@ -163,12 +153,6 @@ def prepare_probe_once(
 
     actual_progress.cell = cell
     actual_progress.screen_point = (x, y)
-    emit_progress(
-        on_progress,
-        phase="executing_probe",
-        target_mode="current",
-        target_cell=cell,
-    )
 
     raise_if_stop_requested(
         stop_event
@@ -187,7 +171,6 @@ def prepare_probe_once(
             ACTIVITY_PAGE_CONFIG.probe_detail_ready_timeout
         ),
         stop_event=stop_event,
-        on_progress=on_progress,
     )
 
     if not ready:
@@ -195,7 +178,6 @@ def prepare_probe_once(
             detect_sonar_page_state(
                 page,
                 stop_event=stop_event,
-                on_progress=on_progress,
             )
         )
 
@@ -300,7 +282,6 @@ def prepare_probe_once(
         adb,
         page,
         stop_event=stop_event,
-        on_progress=on_progress,
     )
 
     logger.info(
