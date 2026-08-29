@@ -23,6 +23,10 @@ from .app_layout import (
     build_app_layout,
 )
 from .auto_loop_bridge import AutoProbeLoopBridge
+from .button_state import (
+    ButtonLabels,
+    StatefulButton,
+)
 from .runtime_context import AppRuntimeContext
 
 
@@ -106,6 +110,10 @@ class BoomBeachSonarApp(tk.Tk):
         self._closing = False
 
         self._build_ui()
+        self.after(
+            0,
+            self._refresh_network_buttons_async,
+        )
 
         self.after(
             100,
@@ -144,10 +152,8 @@ class BoomBeachSonarApp(tk.Tk):
             restart_game=self.restart_game,
             open_screenshot_dir=self.open_screenshot_dir,
             check_root=self.check_root,
-            enable_weak_network=self.enable_weak_network,
-            disable_weak_network=self.disable_weak_network,
-            enable_reject_network=self.enable_reject_network,
-            disable_reject_network=self.disable_reject_network,
+            toggle_weak_network=self.toggle_weak_network,
+            toggle_reject_network=self.toggle_reject_network,
             restore_network=self.restore_network,
             check_network_state=self.check_network_state,
             start_auto_loop=self.start_auto_loop,
@@ -167,11 +173,53 @@ class BoomBeachSonarApp(tk.Tk):
             actions=actions,
         )
 
-        self.auto_loop_start_button = (
-            layout.auto_loop_start_button
+        self._restart_button = StatefulButton(
+            layout.restart_game_button,
+            ButtonLabels(
+                ready="重启游戏",
+                active="重启游戏",
+                busy_on="正在重启…",
+                busy_off="正在重启…",
+                locked="自动流程不可中断",
+                error="重启失败，点击重试",
+            ),
+            is_toggle=False,
         )
-        self.auto_loop_stop_button = (
-            layout.auto_loop_stop_button
+        self._weak_network_button = StatefulButton(
+            layout.weak_network_button,
+            ButtonLabels(
+                ready="开启弱网",
+                active="关闭弱网",
+                busy_on="正在开启弱网…",
+                busy_off="正在关闭弱网…",
+                locked="自动流程中",
+                error="弱网状态未知",
+            ),
+            is_toggle=True,
+        )
+        self._reject_network_button = StatefulButton(
+            layout.reject_network_button,
+            ButtonLabels(
+                ready="开启断网",
+                active="关闭断网",
+                busy_on="正在开启断网…",
+                busy_off="正在关闭断网…",
+                locked="自动流程中",
+                error="断网状态未知",
+            ),
+            is_toggle=True,
+        )
+        self._auto_loop_button = StatefulButton(
+            layout.auto_loop_button,
+            ButtonLabels(
+                ready="启动循环",
+                active="停止循环",
+                busy_on="正在启动…",
+                busy_off="正在停止…",
+                locked="自动流程不可中断",
+                error="循环异常，点击重试",
+            ),
+            is_toggle=True,
         )
         self.log_text = layout.log_text
         self.board_view = layout.board_view
@@ -209,6 +257,7 @@ class BoomBeachSonarApp(tk.Tk):
             self._bind_runtime(
                 context
             )
+            self._refresh_network_buttons_async()
             self._write_log(
                 f"已切换设备：{serial}"
             )
@@ -254,11 +303,15 @@ class BoomBeachSonarApp(tk.Tk):
         if not self._manual_control_available():
             return
 
+        if self._restart_button.begin() is None:
+            return
+
         def task() -> str:
             self.game.restart_game()
             return "网络已恢复，游戏已重启"
 
-        self._run_task(
+        self._run_action_button_task(
+            self._restart_button,
             "正在恢复网络并重启游戏...",
             task,
         )
@@ -279,56 +332,52 @@ class BoomBeachSonarApp(tk.Tk):
             task,
         )
 
-    def enable_weak_network(self) -> None:
+    def toggle_weak_network(self) -> None:
         if not self._manual_control_available():
             return
 
-        def task() -> str:
-            self.network.enable_weak_network()
-            return "弱网 DROP 已开启"
+        target = self._weak_network_button.begin()
+        if target is None:
+            return
 
-        self._run_task(
-            "正在开启弱网...",
-            task,
+        self._run_network_toggle(
+            button=self._weak_network_button,
+            target=target,
+            apply=(
+                self.network.enable_weak_network
+                if target
+                else self.network.disable_weak_network
+            ),
+            enabled=lambda state: state.weak_enabled,
+            success_text=(
+                "弱网 DROP 已开启"
+                if target
+                else "弱网 DROP 已关闭"
+            ),
         )
 
-    def disable_weak_network(self) -> None:
+    def toggle_reject_network(self) -> None:
         if not self._manual_control_available():
             return
 
-        def task() -> str:
-            self.network.disable_weak_network()
-            return "弱网 DROP 已关闭"
-
-        self._run_task(
-            "正在关闭弱网...",
-            task,
-        )
-
-    def enable_reject_network(self) -> None:
-        if not self._manual_control_available():
+        target = self._reject_network_button.begin()
+        if target is None:
             return
 
-        def task() -> str:
-            self.network.enable_reject_network()
-            return "断网 REJECT 已开启"
-
-        self._run_task(
-            "正在开启断网...",
-            task,
-        )
-
-    def disable_reject_network(self) -> None:
-        if not self._manual_control_available():
-            return
-
-        def task() -> str:
-            self.network.disable_reject_network()
-            return "断网 REJECT 已关闭"
-
-        self._run_task(
-            "正在关闭断网...",
-            task,
+        self._run_network_toggle(
+            button=self._reject_network_button,
+            target=target,
+            apply=(
+                self.network.enable_reject_network
+                if target
+                else self.network.disable_reject_network
+            ),
+            enabled=lambda state: state.reject_enabled,
+            success_text=(
+                "断网 REJECT 已开启"
+                if target
+                else "断网 REJECT 已关闭"
+            ),
         )
 
     def restore_network(self) -> None:
@@ -343,6 +392,7 @@ class BoomBeachSonarApp(tk.Tk):
             "正在恢复游戏网络...",
             task,
         )
+        self._refresh_network_buttons_async()
 
     def check_network_state(self) -> None:
         if not self._manual_control_available():
@@ -355,6 +405,7 @@ class BoomBeachSonarApp(tk.Tk):
             "正在检查网络状态...",
             task,
         )
+        self._refresh_network_buttons_async()
 
     # =========================================================
     # 棋盘与策略同步
@@ -472,16 +523,12 @@ class BoomBeachSonarApp(tk.Tk):
         )
         return False
 
-    def _set_auto_loop_running(
-        self,
-        running: bool,
-    ) -> None:
-        if running:
-            self.auto_loop_start_button.state(["disabled"])
-            self.auto_loop_stop_button.state(["!disabled"])
-        else:
-            self.auto_loop_start_button.state(["!disabled"])
-            self.auto_loop_stop_button.state(["disabled"])
+    def _refresh_manual_button_locks(self) -> None:
+        """沿用既有互斥边界：循环线程存活期间人工控制保持锁定。"""
+        locked = self._auto_loop_running()
+        self._restart_button.set_locked(locked)
+        self._weak_network_button.set_locked(locked)
+        self._reject_network_button.set_locked(locked)
 
     def start_auto_loop(self) -> None:
         if self._auto_loop_running():
@@ -494,18 +541,28 @@ class BoomBeachSonarApp(tk.Tk):
             )
             return
 
+        if self._auto_loop_button.begin() is None:
+            return
+
         self.auto_loop_state_var.set("启动中")
         self.auto_loop_total_var.set("发数：0 | HIT：0 | MISS：0")
         self.auto_loop_last_var.set("上一发：-")
         self.status_var.set("自动循环启动中...")
-        self._set_auto_loop_running(True)
         self._write_log(
             "自动循环启动：停止请求会在最近的安全可中断点生效。"
         )
-        self._auto_loop_bridge.start()
+        if not self._auto_loop_bridge.start():
+            self._auto_loop_button.complete_toggle(False)
+            return
+
+        self._auto_loop_button.complete_toggle(True)
+        self._refresh_manual_button_locks()
 
     def stop_auto_loop(self) -> None:
         if not self._auto_loop_running():
+            return
+
+        if self._auto_loop_button.begin() is None:
             return
 
         self._auto_loop_bridge.request_stop()
@@ -574,7 +631,9 @@ class BoomBeachSonarApp(tk.Tk):
             if kind == "summary":
                 summary = payload
                 self._auto_loop_bridge.mark_finished()
-                self._set_auto_loop_running(False)
+                self._auto_loop_button.complete_toggle(False)
+                self._refresh_manual_button_locks()
+                self._refresh_network_buttons_async()
                 self.auto_loop_total_var.set(
                     f"发数：{summary.rounds} | HIT：{summary.hits} | MISS：{summary.misses}"
                 )
@@ -605,7 +664,9 @@ class BoomBeachSonarApp(tk.Tk):
 
             if kind == "error":
                 self._auto_loop_bridge.mark_finished()
-                self._set_auto_loop_running(False)
+                self._auto_loop_button.complete_toggle(False)
+                self._refresh_manual_button_locks()
+                self._refresh_network_buttons_async()
                 self.auto_loop_state_var.set("错误")
                 self.status_var.set("自动循环异常停止")
                 self._show_error(payload)
@@ -691,6 +752,196 @@ class BoomBeachSonarApp(tk.Tk):
     # =========================================================
     # 通用线程与日志处理
     # =========================================================
+
+    def _run_action_button_task(
+        self,
+        button: StatefulButton,
+        running_text: str,
+        task: Callable[[], str],
+    ) -> None:
+        """一次性按钮只在后台动作完整返回后复位。"""
+        self.status_var.set(running_text)
+        self._write_log(running_text)
+
+        def worker() -> None:
+            try:
+                with self._runtime.control_lock:
+                    message = task()
+            except Exception as exc:
+                self.after(
+                    0,
+                    lambda error=exc: self._finish_action_failure(
+                        button,
+                        error,
+                    ),
+                )
+                return
+
+            self.after(
+                0,
+                lambda text=message: self._finish_action_success(
+                    button,
+                    text,
+                ),
+            )
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+        ).start()
+
+    def _finish_action_success(
+        self,
+        button: StatefulButton,
+        message: str,
+    ) -> None:
+        button.complete_action()
+        self._show_success(message)
+
+    def _finish_action_failure(
+        self,
+        button: StatefulButton,
+        error: Exception,
+    ) -> None:
+        button.complete_action()
+        self._show_error(error)
+
+    def _run_network_toggle(
+        self,
+        *,
+        button: StatefulButton,
+        target: bool,
+        apply: Callable[[], None],
+        enabled: Callable[[object], bool],
+        success_text: str,
+    ) -> None:
+        """执行规则修改，再以 NetworkController 的真实查询结果收尾。"""
+        running_text = (
+            "正在开启网络控制..."
+            if target
+            else "正在关闭网络控制..."
+        )
+        self.status_var.set(running_text)
+        self._write_log(running_text)
+
+        def worker() -> None:
+            operation_error: Exception | None = None
+            actual_state: object | None = None
+
+            with self._runtime.control_lock:
+                try:
+                    apply()
+                except Exception as exc:
+                    operation_error = exc
+
+                try:
+                    actual_state = self.network.get_state()
+                except Exception as state_error:
+                    if operation_error is None:
+                        operation_error = state_error
+                    else:
+                        operation_error = RuntimeError(
+                            f"{operation_error}；真实网络状态复核失败：{state_error}"
+                        )
+
+            if actual_state is None:
+                self.after(
+                    0,
+                    lambda error=operation_error: self._finish_unknown_network_state(
+                        button,
+                        error,
+                    ),
+                )
+                return
+
+            is_active = enabled(actual_state)
+            if operation_error is None and is_active != target:
+                operation_error = RuntimeError(
+                    "网络规则操作已返回，但真实状态与目标不一致"
+                )
+
+            self.after(
+                0,
+                lambda active=is_active, error=operation_error: self._finish_network_toggle(
+                    button,
+                    active,
+                    success_text,
+                    error,
+                ),
+            )
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+        ).start()
+
+    def _finish_network_toggle(
+        self,
+        button: StatefulButton,
+        active: bool,
+        success_text: str,
+        error: Exception | None,
+    ) -> None:
+        button.complete_toggle(active)
+        self._refresh_manual_button_locks()
+        if error is None:
+            self._show_success(success_text)
+            return
+
+        self._show_error(error)
+
+    def _finish_unknown_network_state(
+        self,
+        button: StatefulButton,
+        error: Exception | None,
+    ) -> None:
+        button.set_error()
+        self._refresh_manual_button_locks()
+        self._show_error(
+            error
+            if error is not None
+            else RuntimeError("无法读取真实网络状态"),
+        )
+
+    def _refresh_network_buttons_async(self) -> None:
+        """启动及自动流程结束后，读取设备规则而不从本地点击记录推断。"""
+        self._weak_network_button.set_busy_message("正在读取弱网状态…")
+        self._reject_network_button.set_busy_message("正在读取断网状态…")
+
+        def worker() -> None:
+            try:
+                with self._runtime.control_lock:
+                    state = self.network.get_state()
+            except Exception:
+                self.after(
+                    0,
+                    self._mark_network_state_unknown,
+                )
+                return
+
+            self.after(
+                0,
+                lambda actual=state: self._apply_network_state(actual),
+            )
+
+        threading.Thread(
+            target=worker,
+            daemon=True,
+        ).start()
+
+    def _apply_network_state(self, state: object) -> None:
+        self._weak_network_button.complete_toggle(
+            bool(getattr(state, "weak_enabled")),
+        )
+        self._reject_network_button.complete_toggle(
+            bool(getattr(state, "reject_enabled")),
+        )
+        self._refresh_manual_button_locks()
+
+    def _mark_network_state_unknown(self) -> None:
+        self._weak_network_button.set_error()
+        self._reject_network_button.set_error()
+        self._refresh_manual_button_locks()
 
     def _run_task(
         self,

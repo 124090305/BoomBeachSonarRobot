@@ -23,10 +23,8 @@ class AppActions:
     restart_game: Action
     open_screenshot_dir: Action
     check_root: Action
-    enable_weak_network: Action
-    disable_weak_network: Action
-    enable_reject_network: Action
-    disable_reject_network: Action
+    toggle_weak_network: Action
+    toggle_reject_network: Action
     restore_network: Action
     check_network_state: Action
     start_auto_loop: Action
@@ -38,8 +36,10 @@ class AppActions:
 class AppLayout:
     """主窗口后续需要更新的控件引用。"""
 
-    auto_loop_start_button: ttk.Button
-    auto_loop_stop_button: ttk.Button
+    restart_game_button: tk.Button
+    weak_network_button: tk.Button
+    reject_network_button: tk.Button
+    auto_loop_button: tk.Button
     log_text: tk.Text
     board_view: SonarBoardView
 
@@ -126,11 +126,12 @@ def build_app_layout(
         padx=4,
     )
 
-    ttk.Button(
+    restart_game_button = tk.Button(
         basic_row,
         text="重启游戏",
         command=actions.restart_game,
-    ).pack(
+    )
+    restart_game_button.pack(
         side=tk.LEFT,
         padx=4,
     )
@@ -165,38 +166,22 @@ def build_app_layout(
         padx=4,
     )
 
-    ttk.Button(
+    weak_network_button = tk.Button(
         network_row,
         text="开启弱网",
-        command=actions.enable_weak_network,
-    ).pack(
+        command=actions.toggle_weak_network,
+    )
+    weak_network_button.pack(
         side=tk.LEFT,
         padx=4,
     )
 
-    ttk.Button(
-        network_row,
-        text="关闭弱网",
-        command=actions.disable_weak_network,
-    ).pack(
-        side=tk.LEFT,
-        padx=4,
-    )
-
-    ttk.Button(
+    reject_network_button = tk.Button(
         network_row,
         text="开启断网",
-        command=actions.enable_reject_network,
-    ).pack(
-        side=tk.LEFT,
-        padx=4,
+        command=actions.toggle_reject_network,
     )
-
-    ttk.Button(
-        network_row,
-        text="关闭断网",
-        command=actions.disable_reject_network,
-    ).pack(
+    reject_network_button.pack(
         side=tk.LEFT,
         padx=4,
     )
@@ -232,26 +217,15 @@ def build_app_layout(
         pady=(0, 12),
     )
 
-    auto_loop_start_button = ttk.Button(
+    auto_loop_button = tk.Button(
         auto_loop_section,
         text="启动循环",
         command=actions.start_auto_loop,
     )
-    auto_loop_start_button.pack(
+    auto_loop_button.pack(
         side=tk.LEFT,
         padx=(0, 6),
     )
-
-    auto_loop_stop_button = ttk.Button(
-        auto_loop_section,
-        text="停止循环",
-        command=actions.stop_auto_loop,
-    )
-    auto_loop_stop_button.pack(
-        side=tk.LEFT,
-        padx=(0, 12),
-    )
-    auto_loop_stop_button.state(["disabled"])
 
     ttk.Label(
         auto_loop_section,
@@ -382,8 +356,10 @@ def build_app_layout(
     )
 
     return AppLayout(
-        auto_loop_start_button=auto_loop_start_button,
-        auto_loop_stop_button=auto_loop_stop_button,
+        restart_game_button=restart_game_button,
+        weak_network_button=weak_network_button,
+        reject_network_button=reject_network_button,
+        auto_loop_button=auto_loop_button,
         log_text=log_text,
         board_view=board_view,
     )
