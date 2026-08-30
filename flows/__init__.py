@@ -16,6 +16,12 @@ from .auto_probe_loop import (
     run_auto_probe_loop,
 )
 from .auto_probe_ready import ensure_auto_probe_ready
+from .level_loop import (
+    LevelState,
+    MultiLevelLoopSummary,
+    create_level_state,
+    run_multi_level_loop,
+)
 from .auto_probe_recovery import (
     ProbeRecoveryResult,
     recover_after_hit_once,
@@ -40,6 +46,7 @@ from .sonar_page import (
     wait_sonar_ready,
 )
 from stop_control import StopRequestedError
+from .victory_flow import VictoryTransitionError, handle_victory_transition
 
 
 __all__ = [
@@ -47,13 +54,17 @@ __all__ = [
     "AutoProbeCommittedResult",
     "AutoProbeLoopSummary",
     "AutoProbeOnceResult",
+    "LevelState",
     "ManualProbeResult",
+    "MultiLevelLoopSummary",
     "ProbeContext",
     "ProbeRecoveryResult",
     "ScreenshotCheckResult",
     "SonarPageState",
     "StopRequestedError",
+    "VictoryTransitionError",
     "build_default_hit_config",
+    "create_level_state",
     "detect_sonar_page_state",
     "dismiss_activity_start_hint",
     "ensure_auto_probe_ready",
@@ -64,6 +75,7 @@ __all__ = [
     "recover_after_miss_once",
     "reenter_activity_for_probe",
     "run_auto_probe_loop",
+    "run_multi_level_loop",
     "run_auto_probe_once",
     "run_screenshot_check",
     "submit_manual_probe_result",
@@ -71,4 +83,5 @@ __all__ = [
     "wait_activity_detail_ready",
     "wait_home_island_ready",
     "wait_sonar_ready",
+    "handle_victory_transition",
 ]

@@ -6,7 +6,8 @@ import threading
 from flows import (
     AutoProbeCommittedResult,
     AutoProbeOnceResult,
-    run_auto_probe_loop,
+    LevelState,
+    run_multi_level_loop,
 )
 from logger import get_logger
 
@@ -104,16 +105,20 @@ class AutoProbeLoopBridge:
 
         try:
             with context.control_lock:
-                summary = run_auto_probe_loop(
+                summary = run_multi_level_loop(
                     adb=context.adb,
                     page=context.page,
                     network=context.network,
-                    board=context.board,
-                    strategy=context.strategy,
+                    initial_state=LevelState(
+                        context.current_level,
+                        context.board,
+                        context.strategy,
+                    ),
                     game=context.game,
                     stop_event=self.stop_event,
                     on_round=self._queue_round,
                     on_result=self._queue_result,
+                    on_level_changed=self._queue_level,
                 )
 
                 if summary.stop_reason != "requested":
@@ -150,6 +155,10 @@ class AutoProbeLoopBridge:
         self.events.put(
             ("result", (index, result))
         )
+
+    def _queue_level(self, state: LevelState) -> None:
+        self.context = self.context.with_level_state(state)
+        self.events.put(("level", self.context))
 
 
 __all__ = [

@@ -12,11 +12,11 @@ from controllers import (
     PageController,
 )
 from sonar import (
-    CheckerboardHuntStrategy,
     SonarBoard,
     SonarStrategy,
 )
-from sonar_config import DEFAULT_LEVEL_CONFIG
+from flows.level_loop import LevelState, create_level_state
+from sonar_config import INITIAL_LEVEL
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class AppRuntimeContext:
     board: SonarBoard
     strategy: SonarStrategy
     control_lock: threading.Lock
+    current_level: int
 
     @classmethod
     def create(
@@ -38,6 +39,7 @@ class AppRuntimeContext:
         serial: str = config.ADB_SERIAL,
         board: SonarBoard | None = None,
         strategy: SonarStrategy | None = None,
+        current_level: int = INITIAL_LEVEL,
     ) -> AppRuntimeContext:
         """创建完整运行上下文；传入棋盘时可保留当前局状态。"""
         adb = AdbController(
@@ -54,27 +56,16 @@ class AppRuntimeContext:
             network=network,
         )
 
-        actual_board = board
+        if (board is None) != (strategy is None):
+            raise ValueError("board 和 strategy 必须同时提供")
 
-        if actual_board is None:
-            actual_board = SonarBoard(
-                grid_size=DEFAULT_LEVEL_CONFIG.grid_size,
-                submarines=DEFAULT_LEVEL_CONFIG.submarines,
-            )
-            if DEFAULT_LEVEL_CONFIG.board_quad is not None:
-                actual_board.set_screen_quad(
-                    DEFAULT_LEVEL_CONFIG.board_quad
-                )
-
-        actual_strategy = strategy
-
-        if actual_strategy is None:
-            actual_strategy = CheckerboardHuntStrategy(
-                actual_board,
-                hunt_parity=DEFAULT_LEVEL_CONFIG.hunt_parity,
-                use_safety_rule=DEFAULT_LEVEL_CONFIG.use_safety_rule,
-            )
-            actual_strategy.choose_next_cell()
+        if board is None:
+            level_state = create_level_state(current_level)
+            actual_board = level_state.board
+            actual_strategy = level_state.strategy
+        else:
+            actual_board = board
+            actual_strategy = strategy
 
         return cls(
             adb=adb,
@@ -84,6 +75,7 @@ class AppRuntimeContext:
             board=actual_board,
             strategy=actual_strategy,
             control_lock=threading.Lock(),
+            current_level=int(current_level),
         )
 
     def with_device(
@@ -95,6 +87,20 @@ class AppRuntimeContext:
             serial=serial,
             board=self.board,
             strategy=self.strategy,
+            current_level=self.current_level,
+        )
+
+    def with_level_state(self, state: LevelState) -> AppRuntimeContext:
+        """沿用控制器和互斥锁，切换到新关卡的全新棋盘与策略。"""
+        return AppRuntimeContext(
+            adb=self.adb,
+            network=self.network,
+            page=self.page,
+            game=self.game,
+            board=state.board,
+            strategy=state.strategy,
+            control_lock=self.control_lock,
+            current_level=state.level,
         )
 
 

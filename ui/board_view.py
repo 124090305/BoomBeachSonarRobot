@@ -336,6 +336,21 @@ class SonarBoardView(ttk.Frame):
         self._last_manual_revision = -1
         self.refresh()
 
+    def set_models(
+        self,
+        board: SonarBoard,
+        strategy: SonarStrategy | None,
+    ) -> None:
+        """关卡切换时绑定新的棋盘和策略对象。"""
+        self.clear_manual_interaction()
+        self._manual_session = None
+        self.board = board
+        self.strategy = strategy
+        self._last_board_revision = -1
+        self._last_strategy_snapshot = None
+        self._last_manual_revision = -1
+        self.refresh()
+
     def clear_manual_interaction(self) -> None:
         """取消长按、候选选择及其 Canvas 定时任务。"""
         if self._long_press_after_id is not None:

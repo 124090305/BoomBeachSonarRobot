@@ -739,13 +739,6 @@ class BoomBeachSonarApp(tk.Tk):
         if self._auto_loop_running():
             return
 
-        if self.sonar_strategy.done:
-            messagebox.showwarning(
-                "策略已经完成",
-                "当前棋盘策略已经完成。胜利处理尚未接入，请先重置棋盘再测试下一轮。",
-            )
-            return
-
         if self._auto_loop_button.begin() is None:
             return
 
@@ -849,6 +842,21 @@ class BoomBeachSonarApp(tk.Tk):
                 )
                 continue
 
+            if kind == "level":
+                context = payload
+                self._runtime = context
+                self._bind_runtime(context)
+                self.board_view.set_models(
+                    context.board,
+                    context.strategy,
+                )
+                self.auto_loop_state_var.set(f"第 {context.current_level} 关运行中")
+                self.status_var.set(f"已进入第 {context.current_level} 关")
+                self._write_log(
+                    f"关卡切换完成：第 {context.current_level} 关；新棋盘和新策略已同步。"
+                )
+                continue
+
             if kind == "summary":
                 self._pending_auto_loop_terminal = (kind, payload)
                 break
@@ -892,8 +900,10 @@ class BoomBeachSonarApp(tk.Tk):
             state_text = "异常恢复失败，已安全停止"
         elif summary.stop_reason == "requested":
             state_text = "已停止"
+        elif summary.stop_reason == "max_levels":
+            state_text = f"已完成 {summary.completed_levels} 关"
         elif summary.strategy_done:
-            state_text = "策略完成，等待胜利处理"
+            state_text = "当前关卡策略完成"
         else:
             state_text = f"已停止：{summary.stop_reason}"
 

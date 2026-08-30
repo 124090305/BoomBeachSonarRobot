@@ -9,7 +9,7 @@ from ui.auto_loop_bridge import AutoProbeLoopBridge
 
 
 def bridge_context():
-    return SimpleNamespace(
+    context = SimpleNamespace(
         adb=object(),
         page=object(),
         network=Mock(),
@@ -17,7 +17,10 @@ def bridge_context():
         strategy=object(),
         game=object(),
         control_lock=threading.Lock(),
+        current_level=10,
     )
+    context.with_level_state = Mock()
+    return context
 
 
 class AutoLoopBridgeTests(unittest.TestCase):
@@ -51,7 +54,7 @@ class AutoLoopBridgeTests(unittest.TestCase):
         )
 
         with patch(
-            "ui.auto_loop_bridge.run_auto_probe_loop",
+            "ui.auto_loop_bridge.run_multi_level_loop",
             return_value=summary,
         ):
             bridge._worker()

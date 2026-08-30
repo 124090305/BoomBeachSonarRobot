@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 
@@ -61,6 +62,14 @@ class ActivityPageConfig:
     activity_tap_to_start_after_delay: float = 0.5
     probe_after_click_delay: float = 0.3
 
+    victory_template: str = "victory.png"
+    victory_wait_timeout: float = 12.0
+    victory_followup_timeout: float = 0.5
+    victory_max_rounds: int = 3
+    victory_click_delay: float = 0.3
+    victory_after_click_delay: float = 1.0
+    next_level_ready_timeout: float = 15.0
+
 
 @dataclass(frozen=True)
 class AutoProbeConfig:
@@ -106,6 +115,48 @@ DEFAULT_LEVEL_CONFIG = SonarLevelConfig(
     ),
 )
 
+INITIAL_LEVEL = int(os.getenv("SONAR_INITIAL_LEVEL", "10"))
+
+_EARLY_LEVEL_SUBMARINES = {
+    1: (3,),
+    2: (2, 2),
+    3: (2, 2, 3),
+    4: (2, 3, 4),
+    5: (2, 3, 3, 4),
+    6: (2, 2, 3, 3, 5),
+    7: (2, 2, 3, 3, 4, 5),
+    8: (2, 2, 3, 3, 4, 4, 5),
+    9: (2, 3, 3, 4, 4, 5),
+    10: (2, 2, 3, 4, 4, 5),
+}
+
+_EARLY_LEVEL_QUADS = {
+    1: ((666, 247), (786, 329), (662, 420), (543, 327)),
+    2: ((661, 247), (831, 357), (669, 488), (499, 362)),
+    3: ((662, 225), (874, 363), (669, 532), (455, 367)),
+    4: ((667, 192), (916, 362), (665, 562), (413, 359)),
+    5: ((660, 165), (958, 353), (670, 593), (372, 356)),
+    6: ((664, 125), (998, 336), (670, 609), (333, 338)),
+    7: ((661, 89), (1034, 321), (666, 625), (294, 317)),
+    8: ((664, 48), (1071, 288), (671, 625), (259, 290)),
+    9: ((664, 48), (1069, 288), (671, 625), (259, 290)),
+    10: DEFAULT_LEVEL_CONFIG.board_quad,
+}
+
+
+def get_level_config(level: int) -> SonarLevelConfig:
+    """返回关卡配置；10 关以后沿用当前 10x10 活动配置。"""
+    actual_level = int(level)
+    if actual_level <= 0:
+        raise ValueError("关卡编号必须大于 0")
+    if actual_level <= 10:
+        return SonarLevelConfig(
+            grid_size=min(actual_level + 2, 10),
+            submarines=_EARLY_LEVEL_SUBMARINES[actual_level],
+            board_quad=_EARLY_LEVEL_QUADS[actual_level],
+        )
+    return DEFAULT_LEVEL_CONFIG
+
 ACTIVITY_PAGE_CONFIG = ActivityPageConfig()
 AUTO_PROBE_CONFIG = AutoProbeConfig()
 GUI_CONFIG = GuiConfig()
@@ -116,8 +167,10 @@ __all__ = [
     "AUTO_PROBE_CONFIG",
     "DEFAULT_LEVEL_CONFIG",
     "GUI_CONFIG",
+    "INITIAL_LEVEL",
     "ActivityPageConfig",
     "AutoProbeConfig",
     "GuiConfig",
     "SonarLevelConfig",
+    "get_level_config",
 ]
