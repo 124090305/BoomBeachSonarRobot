@@ -264,6 +264,7 @@ class BoomBeachSonarApp(tk.Tk):
         self.log_text = layout.log_text
         self.board_view = layout.board_view
         self.level_selector = layout.level_selector
+        self.scroll_container = layout.scroll_container
 
     def _apply_level_context(
         self,
@@ -1044,6 +1045,11 @@ class BoomBeachSonarApp(tk.Tk):
         self._closing = True
         self._auto_loop_bridge.request_stop()
         self._cancel_regular_after_callbacks()
+        scroll_container = self.__dict__.get(
+            "scroll_container"
+        )
+        if scroll_container is not None:
+            scroll_container.shutdown()
         board_view = getattr(self, "board_view", None)
         if board_view is not None:
             board_view.shutdown()

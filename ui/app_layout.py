@@ -15,6 +15,179 @@ Action = Callable[[], None]
 LevelAction = Callable[[int], None]
 
 
+class ScrollableAppContent(ttk.Frame):
+    """承载主界面全部内容的纵向滚动容器。"""
+
+    _LOCAL_SCROLL_WIDGETS = (
+        tk.Text,
+        tk.Listbox,
+        ttk.Treeview,
+    )
+
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+
+        self.canvas = tk.Canvas(
+            self,
+            highlightthickness=0,
+        )
+        self.scrollbar = ttk.Scrollbar(
+            self,
+            orient=tk.VERTICAL,
+            command=self.canvas.yview,
+        )
+        self.canvas.configure(
+            yscrollcommand=self.scrollbar.set,
+        )
+        self.canvas.pack(
+            side=tk.LEFT,
+            fill=tk.BOTH,
+            expand=True,
+        )
+        self.scrollbar.pack(
+            side=tk.RIGHT,
+            fill=tk.Y,
+        )
+
+        self.content = ttk.Frame(
+            self.canvas,
+            padding=18,
+        )
+        self._content_window = self.canvas.create_window(
+            (0, 0),
+            window=self.content,
+            anchor=tk.NW,
+        )
+        self._wheel_bindtag = (
+            f"ScrollableAppContent-{id(self)}"
+        )
+        self._layout_after_id: str | None = None
+        self._closed = False
+
+        self.canvas.bind(
+            "<Configure>",
+            self._schedule_layout_sync,
+            add="+",
+        )
+        self.content.bind(
+            "<Configure>",
+            self._schedule_layout_sync,
+            add="+",
+        )
+        self.bind_class(
+            self._wheel_bindtag,
+            "<MouseWheel>",
+            self._on_mousewheel,
+        )
+        self.bind_class(
+            self._wheel_bindtag,
+            "<Button-4>",
+            self._on_mousewheel,
+        )
+        self.bind_class(
+            self._wheel_bindtag,
+            "<Button-5>",
+            self._on_mousewheel,
+        )
+
+    def bind_mousewheel_tree(self) -> None:
+        """让主窗口现有控件都能把滚轮事件交给整体页面。"""
+        self._add_wheel_bindtag(self)
+
+    def refresh(self) -> None:
+        """在内容创建或尺寸变化后刷新可滚动范围。"""
+        self._schedule_layout_sync()
+
+    def _add_wheel_bindtag(self, widget: tk.Misc) -> None:
+        bindtags = widget.bindtags()
+        if self._wheel_bindtag not in bindtags:
+            widget.bindtags((*bindtags, self._wheel_bindtag))
+        for child in widget.winfo_children():
+            self._add_wheel_bindtag(child)
+
+    def _schedule_layout_sync(self, _event: tk.Event | None = None) -> None:
+        if self._closed or self._layout_after_id is not None:
+            return
+        self._layout_after_id = self.after_idle(
+            self._sync_layout,
+        )
+
+    def _sync_layout(self) -> None:
+        self._layout_after_id = None
+        if self._closed or not self.winfo_exists():
+            return
+
+        viewport_width = max(1, self.canvas.winfo_width())
+        viewport_height = max(1, self.canvas.winfo_height())
+        content_height = max(
+            viewport_height,
+            self.content.winfo_reqheight(),
+        )
+        current_width = int(float(self.canvas.itemcget(
+            self._content_window,
+            "width",
+        )))
+        current_height = int(float(self.canvas.itemcget(
+            self._content_window,
+            "height",
+        )))
+        if (
+            current_width != viewport_width
+            or current_height != content_height
+        ):
+            self.canvas.itemconfigure(
+                self._content_window,
+                width=viewport_width,
+                height=content_height,
+            )
+        bounds = self.canvas.bbox("all")
+        if bounds is not None:
+            self.canvas.configure(
+                scrollregion=bounds,
+            )
+
+    def _on_mousewheel(self, event: tk.Event) -> str | None:
+        if isinstance(event.widget, self._LOCAL_SCROLL_WIDGETS):
+            return None
+
+        button = getattr(event, "num", None)
+        if button == 4:
+            units = -1
+        elif button == 5:
+            units = 1
+        else:
+            delta = int(getattr(event, "delta", 0))
+            if delta == 0:
+                return None
+            units = -int(delta / 120)
+            if units == 0:
+                units = -1 if delta > 0 else 1
+
+        self.canvas.yview_scroll(units, "units")
+        return "break"
+
+    def shutdown(self) -> None:
+        """窗口销毁前移除滚轮绑定和待执行的布局回调。"""
+        if self._closed:
+            return
+        self._closed = True
+        if self._layout_after_id is not None:
+            try:
+                self.after_cancel(self._layout_after_id)
+            except tk.TclError:
+                pass
+            self._layout_after_id = None
+        for sequence in (
+            "<MouseWheel>",
+            "<Button-4>",
+            "<Button-5>",
+        ):
+            self.unbind_class(
+                self._wheel_bindtag,
+                sequence,
+            )
+
+
 @dataclass(frozen=True)
 class AppActions:
     """主窗口布局需要绑定的用户操作入口。"""
@@ -57,6 +230,7 @@ class AppLayout:
     log_text: tk.Text
     board_view: SonarBoardView
     level_selector: LevelSelector
+    scroll_container: ScrollableAppContent
 
 
 def build_app_layout(
@@ -73,15 +247,12 @@ def build_app_layout(
     actions: AppActions,
 ) -> AppLayout:
     """创建主窗口控件并返回需要动态操作的控件。"""
-    container = ttk.Frame(
-        master,
-        padding=18,
-    )
-
-    container.pack(
+    scroll_container = ScrollableAppContent(master)
+    scroll_container.pack(
         fill=tk.BOTH,
         expand=True,
     )
+    container = scroll_container.content
 
     ttk.Label(
         container,
@@ -422,6 +593,8 @@ def build_app_layout(
         6,
         weight=2,
     )
+    scroll_container.bind_mousewheel_tree()
+    scroll_container.refresh()
 
     return AppLayout(
         apply_device_button=apply_device_button,
@@ -438,11 +611,13 @@ def build_app_layout(
         log_text=log_text,
         board_view=board_view,
         level_selector=level_selector,
+        scroll_container=scroll_container,
     )
 
 
 __all__ = [
     "AppActions",
     "AppLayout",
+    "ScrollableAppContent",
     "build_app_layout",
 ]
