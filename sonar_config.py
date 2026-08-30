@@ -128,6 +128,7 @@ _EARLY_LEVEL_SUBMARINES = {
     8: (2, 2, 3, 3, 4, 4, 5),
     9: (2, 3, 3, 4, 4, 5),
     10: (2, 2, 3, 4, 4, 5),
+    11: (2, 2, 3, 4, 5),
 }
 
 _EARLY_LEVEL_QUADS = {
@@ -140,16 +141,17 @@ _EARLY_LEVEL_QUADS = {
     7: ((661, 89), (1034, 321), (666, 625), (294, 317)),
     8: ((664, 48), (1071, 288), (671, 625), (259, 290)),
     9: ((664, 48), (1069, 288), (671, 625), (259, 290)),
-    10: DEFAULT_LEVEL_CONFIG.board_quad,
+    10: ((664, 48), (1069, 288), (671, 625), (259, 290)),
+    11: DEFAULT_LEVEL_CONFIG.board_quad,
 }
 
 
 def get_level_config(level: int) -> SonarLevelConfig:
-    """返回关卡配置；10 关以后沿用当前 10x10 活动配置。"""
+    """返回关卡配置；11 关以后沿用当前 10x10 活动配置。"""
     actual_level = int(level)
     if actual_level <= 0:
         raise ValueError("关卡编号必须大于 0")
-    if actual_level <= 10:
+    if actual_level <= 11:
         return SonarLevelConfig(
             grid_size=min(actual_level + 2, 10),
             submarines=_EARLY_LEVEL_SUBMARINES[actual_level],
