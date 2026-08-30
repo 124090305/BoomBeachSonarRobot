@@ -66,6 +66,38 @@ class LevelLoopTests(unittest.TestCase):
         self.assertEqual(changed[0].level, 11)
         self.assertIsNot(changed[0].board, initial.board)
 
+    def test_progresses_9_to_12_using_11_plus_config(self) -> None:
+        initial = create_level_state(9)
+        changed = []
+
+        with (
+            patch(
+                "flows.level_loop.run_auto_probe_loop",
+                side_effect=[
+                    done_summary(),
+                    done_summary(),
+                    done_summary(),
+                    done_summary(),
+                ],
+            ),
+            patch("flows.level_loop.handle_victory_transition", return_value=1),
+        ):
+            summary = run_multi_level_loop(
+                adb=object(),
+                page=object(),
+                network=object(),
+                initial_state=initial,
+                on_level_changed=changed.append,
+                max_levels=4,
+            )
+
+        self.assertEqual([state.level for state in changed], [10, 11, 12])
+        self.assertEqual(summary.current_level, 12)
+        self.assertEqual(
+            changed[-1].board.submarines,
+            create_level_state(11).board.submarines,
+        )
+
     def test_stop_during_victory_wait_does_not_advance(self) -> None:
         initial = create_level_state(10)
         stop_event = Event()

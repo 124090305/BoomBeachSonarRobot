@@ -103,6 +103,12 @@ class AppRuntimeContext:
             current_level=state.level,
         )
 
+    def with_level(self, level: int) -> AppRuntimeContext:
+        """按统一关卡工厂重建棋盘与策略，保留设备控制对象。"""
+        return self.with_level_state(
+            create_level_state(level)
+        )
+
 
 __all__ = [
     "AppRuntimeContext",

@@ -65,6 +65,23 @@ class AutoLoopBridgeTests(unittest.TestCase):
             ("summary", summary),
         )
 
+    def test_worker_uses_current_selected_level_models(self) -> None:
+        context = bridge_context()
+        context.current_level = 4
+        bridge = AutoProbeLoopBridge(context)
+        summary = SimpleNamespace(stop_reason="requested")
+
+        with patch(
+            "ui.auto_loop_bridge.run_multi_level_loop",
+            return_value=summary,
+        ) as run_loop:
+            bridge._worker()
+
+        initial_state = run_loop.call_args.kwargs["initial_state"]
+        self.assertEqual(initial_state.level, 4)
+        self.assertIs(initial_state.board, context.board)
+        self.assertIs(initial_state.strategy, context.strategy)
+
     def test_close_waits_for_background_before_network_cleanup(self) -> None:
         context = bridge_context()
         bridge = AutoProbeLoopBridge(

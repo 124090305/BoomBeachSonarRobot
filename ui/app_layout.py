@@ -8,9 +8,11 @@ from typing import Callable
 from sonar import SonarBoard, SonarStrategy
 
 from .board_view import SonarBoardView
+from .level_selector import LevelSelector
 
 
 Action = Callable[[], None]
+LevelAction = Callable[[int], None]
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class AppActions:
     discard_manual_changes: Action
     apply_manual_changes: Action
     reset_sonar_board: Action
+    change_level: LevelAction
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,7 @@ class AppLayout:
     manual_apply_button: ttk.Button
     log_text: tk.Text
     board_view: SonarBoardView
+    level_selector: LevelSelector
 
 
 def build_app_layout(
@@ -63,6 +67,7 @@ def build_app_layout(
     auto_loop_state_var: tk.StringVar,
     auto_loop_total_var: tk.StringVar,
     auto_loop_last_var: tk.StringVar,
+    current_level: int,
     board: SonarBoard,
     strategy: SonarStrategy,
     actions: AppActions,
@@ -227,6 +232,21 @@ def build_app_layout(
         columnspan=3,
         sticky=tk.EW,
         pady=(0, 12),
+    )
+
+    ttk.Label(
+        auto_loop_section,
+        text="当前关卡：",
+    ).pack(side=tk.LEFT)
+    level_selector = LevelSelector(
+        auto_loop_section,
+        current_level=current_level,
+        on_select=actions.change_level,
+        visible_rows=6,
+    )
+    level_selector.pack(
+        side=tk.LEFT,
+        padx=(4, 12),
     )
 
     auto_loop_button = tk.Button(
@@ -417,6 +437,7 @@ def build_app_layout(
         manual_apply_button=manual_apply_button,
         log_text=log_text,
         board_view=board_view,
+        level_selector=level_selector,
     )
 
 

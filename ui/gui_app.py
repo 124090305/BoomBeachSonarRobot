@@ -119,6 +119,7 @@ class BoomBeachSonarApp(tk.Tk):
         self._auto_loop_after_id: str | None = None
         self._close_poll_after_id: str | None = None
         self._closing = False
+        self._context_operation_count = 0
 
         self._build_ui()
         self._startup_after_id = self.after(
@@ -178,6 +179,7 @@ class BoomBeachSonarApp(tk.Tk):
             discard_manual_changes=self.discard_manual_changes,
             apply_manual_changes=self.apply_manual_changes,
             reset_sonar_board=self.reset_sonar_board,
+            change_level=self.change_level,
         )
 
         layout = build_app_layout(
@@ -187,6 +189,7 @@ class BoomBeachSonarApp(tk.Tk):
             auto_loop_state_var=self.auto_loop_state_var,
             auto_loop_total_var=self.auto_loop_total_var,
             auto_loop_last_var=self.auto_loop_last_var,
+            current_level=self._runtime.current_level,
             board=self.sonar_board,
             strategy=self.sonar_strategy,
             actions=actions,
@@ -260,6 +263,94 @@ class BoomBeachSonarApp(tk.Tk):
         self._manual_apply_button = layout.manual_apply_button
         self.log_text = layout.log_text
         self.board_view = layout.board_view
+        self.level_selector = layout.level_selector
+
+    def _apply_level_context(
+        self,
+        context: AppRuntimeContext,
+    ) -> None:
+        """在 Tk 主线程统一换绑关卡运行上下文和棋盘 UI。"""
+        self._runtime = context
+        self._bind_runtime(context)
+        self.board_view.set_models(
+            context.board,
+            context.strategy,
+        )
+        self.level_selector.set_level(
+            context.current_level
+        )
+
+    def _level_change_allowed(self) -> bool:
+        """关卡切换只允许发生在完全空闲的运行上下文上。"""
+        attributes = self.__dict__
+        if attributes.get("_closing", False):
+            return False
+        if attributes.get("_manual_session") is not None:
+            return False
+        if attributes.get("_pending_auto_loop_terminal") is not None:
+            return False
+        bridge = attributes.get("_auto_loop_bridge")
+        if bridge is not None and bridge.running:
+            return False
+        runtime = attributes.get("_runtime")
+        if runtime is not None and runtime.control_lock.locked():
+            return False
+        if attributes.get("_context_operation_count", 0) > 0:
+            return False
+        return True
+
+    def _refresh_level_selector_lock(self) -> None:
+        selector = self.__dict__.get("level_selector")
+        if selector is None:
+            return
+        selector.set_enabled(
+            self._level_change_allowed()
+        )
+
+    def _begin_context_operation(self) -> None:
+        count = self.__dict__.get("_context_operation_count", 0)
+        self._context_operation_count = count + 1
+        selector = self.__dict__.get("level_selector")
+        if selector is not None:
+            selector.set_enabled(False)
+
+    def _end_context_operation(self) -> None:
+        self._context_operation_count = max(
+            0,
+            self.__dict__.get("_context_operation_count", 0) - 1,
+        )
+        self._refresh_level_selector_lock()
+
+    def change_level(self, level: int) -> None:
+        """人工切换程序内部关卡；不操作设备、页面或网络。"""
+        if not self._level_change_allowed():
+            self.level_selector.set_level(
+                self._runtime.current_level
+            )
+            return
+
+        actual_level = int(level)
+        if actual_level == self._runtime.current_level:
+            return
+
+        try:
+            context = self._runtime.with_level(actual_level)
+            self._auto_loop_bridge.set_context(context)
+            self._apply_level_context(context)
+        except Exception as exc:
+            self.level_selector.set_level(
+                self._runtime.current_level
+            )
+            self._show_error(exc)
+            return
+
+        self.auto_loop_total_var.set("发数：0 | HIT：0 | MISS：0")
+        self.auto_loop_last_var.set("上一发：-")
+        self.status_var.set(f"已切换到第 {actual_level} 关")
+        self._write_log(
+            f"人工切换关卡完成：内部关卡={actual_level}；新棋盘和新策略已初始化。"
+        )
+        self._refresh_level_selector_lock()
 
     # =========================================================
     # 控制器切换
@@ -607,6 +698,7 @@ class BoomBeachSonarApp(tk.Tk):
         state = ["disabled"] if locked else ["!disabled"]
         self._apply_device_button.state(state)
         self._reset_board_button.state(state)
+        self._refresh_level_selector_lock()
 
     def _show_manual_edit_message(self, message: str) -> None:
         self.status_var.set(f"人工编辑：{message}")
@@ -728,6 +820,7 @@ class BoomBeachSonarApp(tk.Tk):
         self._weak_network_button.set_locked(locked)
         self._reject_network_button.set_locked(locked)
         self._manual_intervention_button.set_locked(locked)
+        self._refresh_level_selector_lock()
 
     def start_auto_loop(self) -> None:
         if self._manual_session is not None:
@@ -743,6 +836,9 @@ class BoomBeachSonarApp(tk.Tk):
             return
 
         self._manual_intervention_button.set_locked(True)
+        selector = self.__dict__.get("level_selector")
+        if selector is not None:
+            selector.set_enabled(False)
 
         self.auto_loop_state_var.set("启动中")
         self.auto_loop_total_var.set("发数：0 | HIT：0 | MISS：0")
@@ -754,6 +850,7 @@ class BoomBeachSonarApp(tk.Tk):
         if not self._auto_loop_bridge.start():
             self._auto_loop_button.complete_toggle(False)
             self._manual_intervention_button.set_locked(False)
+            self._refresh_level_selector_lock()
             return
 
         self._auto_loop_button.complete_toggle(True)
@@ -844,12 +941,7 @@ class BoomBeachSonarApp(tk.Tk):
 
             if kind == "level":
                 context = payload
-                self._runtime = context
-                self._bind_runtime(context)
-                self.board_view.set_models(
-                    context.board,
-                    context.strategy,
-                )
+                self._apply_level_context(context)
                 self.auto_loop_state_var.set(f"第 {context.current_level} 关运行中")
                 self.status_var.set(f"已进入第 {context.current_level} 关")
                 self._write_log(
@@ -872,6 +964,8 @@ class BoomBeachSonarApp(tk.Tk):
             terminal = self._pending_auto_loop_terminal
             self._pending_auto_loop_terminal = None
             self._finish_auto_loop_terminal(*terminal)
+
+        self._refresh_level_selector_lock()
 
         if self.winfo_exists() and not self._closing:
             self._auto_loop_after_id = self.after(
@@ -1061,6 +1155,7 @@ class BoomBeachSonarApp(tk.Tk):
         """一次性按钮只在后台动作完整返回后复位。"""
         self.status_var.set(running_text)
         self._write_log(running_text)
+        self._begin_context_operation()
 
         def worker() -> None:
             try:
@@ -1092,6 +1187,7 @@ class BoomBeachSonarApp(tk.Tk):
         button: StatefulButton,
         message: str,
     ) -> None:
+        self._end_context_operation()
         button.complete_action()
         self._show_success(message)
 
@@ -1100,6 +1196,7 @@ class BoomBeachSonarApp(tk.Tk):
         button: StatefulButton,
         error: Exception,
     ) -> None:
+        self._end_context_operation()
         button.complete_action()
         self._show_error(error)
 
@@ -1120,6 +1217,7 @@ class BoomBeachSonarApp(tk.Tk):
         )
         self.status_var.set(running_text)
         self._write_log(running_text)
+        self._begin_context_operation()
 
         def worker() -> None:
             operation_error: Exception | None = None
@@ -1177,6 +1275,7 @@ class BoomBeachSonarApp(tk.Tk):
         success_text: str,
         error: Exception | None,
     ) -> None:
+        self._end_context_operation()
         button.complete_toggle(active)
         self._refresh_manual_button_locks()
         if error is None:
@@ -1190,6 +1289,7 @@ class BoomBeachSonarApp(tk.Tk):
         button: StatefulButton,
         error: Exception | None,
     ) -> None:
+        self._end_context_operation()
         button.set_error()
         self._refresh_manual_button_locks()
         self._show_error(
@@ -1202,6 +1302,7 @@ class BoomBeachSonarApp(tk.Tk):
         """启动及自动流程结束后，读取设备规则而不从本地点击记录推断。"""
         self._weak_network_button.set_busy_message("正在读取弱网状态…")
         self._reject_network_button.set_busy_message("正在读取断网状态…")
+        self._begin_context_operation()
 
         def worker() -> None:
             try:
@@ -1221,6 +1322,7 @@ class BoomBeachSonarApp(tk.Tk):
         ).start()
 
     def _apply_network_state(self, state: object) -> None:
+        self._end_context_operation()
         self._weak_network_button.complete_toggle(
             bool(getattr(state, "weak_enabled")),
         )
@@ -1230,6 +1332,7 @@ class BoomBeachSonarApp(tk.Tk):
         self._refresh_manual_button_locks()
 
     def _mark_network_state_unknown(self) -> None:
+        self._end_context_operation()
         self._weak_network_button.set_error()
         self._reject_network_button.set_error()
         self._refresh_manual_button_locks()
@@ -1245,6 +1348,7 @@ class BoomBeachSonarApp(tk.Tk):
         self._write_log(
             running_text
         )
+        self._begin_context_operation()
 
         def worker() -> None:
             try:
@@ -1254,18 +1358,26 @@ class BoomBeachSonarApp(tk.Tk):
                     message = task()
             except Exception as exc:
                 self._queue_ui_callback(
-                    lambda error=exc: self._show_error(error),
+                    lambda error=exc: self._finish_task_error(error),
                 )
                 return
 
             self._queue_ui_callback(
-                lambda text=message: self._show_success(text),
+                lambda text=message: self._finish_task_success(text),
             )
 
         threading.Thread(
             target=worker,
             daemon=True,
         ).start()
+
+    def _finish_task_success(self, message: str) -> None:
+        self._end_context_operation()
+        self._show_success(message)
+
+    def _finish_task_error(self, error: Exception) -> None:
+        self._end_context_operation()
+        self._show_error(error)
 
     def _show_success(
         self,

@@ -344,8 +344,14 @@ class SonarBoardView(ttk.Frame):
         """关卡切换时绑定新的棋盘和策略对象。"""
         self.clear_manual_interaction()
         self._manual_session = None
+        self._manual_message = None
         self.board = board
         self.strategy = strategy
+        self._cell_items.clear()
+        self._hover_cell = None
+        self.hover_var.set(
+            "移动鼠标到格子上，可查看逻辑坐标、模拟器坐标和当前状态"
+        )
         self._last_board_revision = -1
         self._last_strategy_snapshot = None
         self._last_manual_revision = -1
