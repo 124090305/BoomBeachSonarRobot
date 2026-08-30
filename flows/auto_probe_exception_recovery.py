@@ -38,7 +38,7 @@ def restart_auto_probe_once(
         max_attempts,
     )
 
-    game.restart_game()
+    game.restart_game(stop_event=stop_event)
 
     raise_if_stop_requested(
         stop_event

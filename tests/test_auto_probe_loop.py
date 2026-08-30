@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from flows.auto_probe_loop import run_auto_probe_loop
 from flows.sonar_page import SonarPageState
@@ -176,7 +176,9 @@ class AutoProbeLoopTests(unittest.TestCase):
             )
 
         self.assertEqual(run_once.call_count, 2)
-        game.restart_game.assert_called_once_with()
+        game.restart_game.assert_called_once_with(
+            stop_event=ANY,
+        )
         ensure_ready.assert_called_once()
         self.assertIs(
             run_once.call_args_list[0].kwargs["board"],

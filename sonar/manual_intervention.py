@@ -1,0 +1,409 @@
+from __future__ import annotations
+
+from collections import Counter, deque
+from dataclasses import dataclass
+from typing import Iterable, Protocol
+
+from .board import BoardSnapshot, Cell, CellState, SonarBoard
+from .strategy import ConfirmedShip, StrategySnapshot
+
+
+class ManualEditError(ValueError):
+    """人工编辑操作不允许执行。"""
+
+
+@dataclass(frozen=True)
+class _EditState:
+    states: tuple[tuple[CellState, ...], ...]
+    confirmed_ships: tuple[ConfirmedShip, ...]
+
+
+@dataclass(frozen=True)
+class ManualApplyResult:
+    """一次人工修改正式应用后的内存状态。"""
+
+    next_cell: Cell | None
+    board_snapshot: BoardSnapshot
+    strategy_snapshot: StrategySnapshot
+
+
+class RebuildableStrategy(Protocol):
+    use_safety_rule: bool
+
+    def snapshot(self) -> StrategySnapshot:
+        ...
+
+    def rebuild_from_board(
+        self,
+        confirmed_ships: Iterable[ConfirmedShip],
+    ) -> StrategySnapshot:
+        ...
+
+    def restore_from_snapshot(self, snapshot: StrategySnapshot) -> None:
+        ...
+
+    def choose_next_cell(self) -> Cell | None:
+        ...
+
+
+class ManualEditSession:
+    """与正式棋盘和策略隔离的人工编辑缓存及历史。"""
+
+    def __init__(
+        self,
+        board: SonarBoard,
+        confirmed_ships: Iterable[ConfirmedShip] = (),
+    ) -> None:
+        snapshot = board.snapshot()
+        self.grid_size = snapshot.grid_size
+        self.submarines = snapshot.submarines
+        self.screen_points = snapshot.screen_points
+        states = self._normalize_states(snapshot)
+        ships = tuple(confirmed_ships) or self._ships_from_sunk_cells(states)
+        self._initial = _EditState(states, ships)
+        self._current = self._initial
+        self._undo: list[_EditState] = []
+        self._redo: list[_EditState] = []
+        self._revision = 0
+
+    @staticmethod
+    def _normalize_states(snapshot: BoardSnapshot):
+        return tuple(
+            tuple(
+                CellState.UNKNOWN if state == CellState.SELECTED else state
+                for state in row
+            )
+            for row in snapshot.states
+        )
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    @property
+    def states(self) -> tuple[tuple[CellState, ...], ...]:
+        return self._current.states
+
+    @property
+    def confirmed_ships(self) -> tuple[ConfirmedShip, ...]:
+        return self._current.confirmed_ships
+
+    @property
+    def can_undo(self) -> bool:
+        return bool(self._undo)
+
+    @property
+    def can_redo(self) -> bool:
+        return bool(self._redo)
+
+    @property
+    def changed_cells(self) -> frozenset[Cell]:
+        return frozenset(
+            (row, col)
+            for row in range(self.grid_size)
+            for col in range(self.grid_size)
+            if self.states[row][col] != self._initial.states[row][col]
+        )
+
+    @property
+    def pending_confirmed_cells(self) -> frozenset[Cell]:
+        original = {ship.cells for ship in self._initial.confirmed_ships}
+        return frozenset(
+            cell
+            for ship in self.confirmed_ships
+            if ship.cells not in original
+            for cell in ship.cells
+        )
+
+    @property
+    def pending_cancelled_cells(self) -> frozenset[Cell]:
+        current = {ship.cells for ship in self.confirmed_ships}
+        return frozenset(
+            cell
+            for ship in self._initial.confirmed_ships
+            if ship.cells not in current
+            for cell in ship.cells
+        )
+
+    def state_at(self, cell: Cell) -> CellState:
+        row, col = self._validate_cell(cell)
+        return self.states[row][col]
+
+    def cycle_cell(self, cell: Cell) -> CellState:
+        row, col = self._validate_cell(cell)
+        current = self.states[row][col]
+        if current == CellState.SUNK:
+            raise ManualEditError("请先长按取消整艘潜艇确认")
+        next_state = {
+            CellState.UNKNOWN: CellState.HIT,
+            CellState.SELECTED: CellState.HIT,
+            CellState.HIT: CellState.MISS,
+            CellState.MISS: CellState.UNKNOWN,
+        }[current]
+        self._commit(
+            self._replace_cells(self.states, (cell,), next_state),
+            self.confirmed_ships,
+        )
+        return next_state
+
+    def validate_ship_candidate(self, cells: Iterable[Cell]) -> tuple[Cell, ...]:
+        ordered = self._ordered_straight_cells(cells)
+        if len(ordered) not in self.submarines:
+            raise ManualEditError("候选长度不符合当前关卡潜艇配置")
+        if any(self.state_at(cell) != CellState.HIT for cell in ordered):
+            raise ManualEditError("候选潜艇必须全部由连续 HIT 格组成")
+        available = Counter(self.submarines)
+        existing = Counter(ship.length for ship in self.confirmed_ships)
+        if existing[len(ordered)] >= available[len(ordered)]:
+            raise ManualEditError("该长度潜艇的可确认数量已经用完")
+        return ordered
+
+    def confirm_ship(self, cells: Iterable[Cell]) -> ConfirmedShip:
+        ordered = self.validate_ship_candidate(cells)
+        direction = "H" if len({row for row, _col in ordered}) == 1 else "V"
+        ship = ConfirmedShip(
+            length=len(ordered),
+            direction=direction,
+            cells=ordered,
+            safety_area=frozenset(),
+        )
+        self._commit(
+            self._replace_cells(self.states, ordered, CellState.SUNK),
+            self.confirmed_ships + (ship,),
+        )
+        return ship
+
+    def cancel_ship_at(self, cell: Cell) -> ConfirmedShip:
+        self._validate_cell(cell)
+        ship = next(
+            (item for item in self.confirmed_ships if cell in item.cells),
+            None,
+        )
+        if ship is None:
+            raise ManualEditError("该 SUNK 格没有对应的完整潜艇记录")
+        self._commit(
+            self._replace_cells(self.states, ship.cells, CellState.HIT),
+            tuple(item for item in self.confirmed_ships if item != ship),
+        )
+        return ship
+
+    def undo(self) -> bool:
+        if not self._undo:
+            return False
+        self._redo.append(self._current)
+        self._current = self._undo.pop()
+        self._revision += 1
+        return True
+
+    def redo(self) -> bool:
+        if not self._redo:
+            return False
+        self._undo.append(self._current)
+        self._current = self._redo.pop()
+        self._revision += 1
+        return True
+
+    def discard_changes(self) -> None:
+        self._current = self._initial
+        self._undo.clear()
+        self._redo.clear()
+        self._revision += 1
+
+    def validate_for_apply(self, *, use_safety_rule: bool) -> None:
+        """在写入正式状态前校验当前完整人工结果。"""
+        available = Counter(self.submarines)
+        used: Counter[int] = Counter()
+        occupied: set[Cell] = set()
+        normalized_ships: list[tuple[Cell, ...]] = []
+
+        for index, ship in enumerate(self.confirmed_ships, start=1):
+            try:
+                cells = self._ordered_straight_cells(ship.cells)
+            except ManualEditError as exc:
+                raise ManualEditError(f"第 {index} 艘潜艇：{exc}") from exc
+            length = len(cells)
+            if available[length] <= 0:
+                raise ManualEditError(f"长度 {length} 不属于当前潜艇配置")
+            used[length] += 1
+            if used[length] > available[length]:
+                raise ManualEditError(f"长度 {length} 的潜艇数量超过关卡配置")
+            overlap = occupied.intersection(cells)
+            if overlap:
+                raise ManualEditError(f"已确认潜艇发生重叠：{sorted(overlap)}")
+            for cell in cells:
+                state = self.state_at(cell)
+                if state == CellState.MISS:
+                    raise ManualEditError(f"已确认潜艇内部包含 MISS：{cell}")
+                if state != CellState.SUNK:
+                    raise ManualEditError(
+                        f"已确认潜艇与棋盘状态冲突：{cell}={state.value}"
+                    )
+            occupied.update(cells)
+            normalized_ships.append(cells)
+
+        sunk_cells = {
+            (row, col)
+            for row in range(self.grid_size)
+            for col in range(self.grid_size)
+            if self.states[row][col] == CellState.SUNK
+        }
+        if sunk_cells != occupied:
+            raise ManualEditError("SUNK 格与已确认潜艇记录不一致")
+
+        if use_safety_rule:
+            for index, cells in enumerate(normalized_ships, start=1):
+                safety = self._calc_safety_area(cells)
+                ship_conflicts = safety.intersection(occupied)
+                if ship_conflicts:
+                    raise ManualEditError(
+                        f"第 {index} 艘潜艇违反安全间距："
+                        f"{sorted(ship_conflicts)}"
+                    )
+                hit_conflicts = {
+                    cell
+                    for cell in safety
+                    if self.state_at(cell) == CellState.HIT
+                }
+                if hit_conflicts:
+                    raise ManualEditError(
+                        f"第 {index} 艘潜艇安全区域存在 HIT："
+                        f"{sorted(hit_conflicts)}"
+                    )
+
+    def _commit(self, states, ships: tuple[ConfirmedShip, ...]) -> None:
+        next_state = _EditState(states, ships)
+        if next_state == self._current:
+            return
+        self._undo.append(self._current)
+        self._current = next_state
+        self._redo.clear()
+        self._revision += 1
+
+    @staticmethod
+    def _replace_cells(states, cells: Iterable[Cell], state: CellState):
+        mutable = [list(row) for row in states]
+        for row, col in cells:
+            mutable[row][col] = state
+        return tuple(tuple(row) for row in mutable)
+
+    def _ordered_straight_cells(self, cells: Iterable[Cell]) -> tuple[Cell, ...]:
+        raw = tuple(self._validate_cell(cell) for cell in cells)
+        if not raw or len(set(raw)) != len(raw):
+            raise ManualEditError("候选潜艇格为空或重复")
+        rows = {row for row, _col in raw}
+        cols = {col for _row, col in raw}
+        if len(rows) == 1:
+            ordered = tuple(sorted(raw, key=lambda item: item[1]))
+            values = [col for _row, col in ordered]
+        elif len(cols) == 1:
+            ordered = tuple(sorted(raw, key=lambda item: item[0]))
+            values = [row for row, _col in ordered]
+        else:
+            raise ManualEditError("候选潜艇只能横向或纵向")
+        if values != list(range(values[0], values[0] + len(values))):
+            raise ManualEditError("候选潜艇格必须连续")
+        return ordered
+
+    def _validate_cell(self, cell: Cell) -> Cell:
+        row, col = int(cell[0]), int(cell[1])
+        if not (0 <= row < self.grid_size and 0 <= col < self.grid_size):
+            raise ManualEditError(f"格子超出棋盘范围：{cell}")
+        return row, col
+
+    def _calc_safety_area(self, cells: tuple[Cell, ...]) -> set[Cell]:
+        rows = [row for row, _col in cells]
+        cols = [col for _row, col in cells]
+        body = set(cells)
+        return {
+            (row, col)
+            for row in range(min(rows) - 1, max(rows) + 2)
+            for col in range(min(cols) - 1, max(cols) + 2)
+            if 0 <= row < self.grid_size
+            and 0 <= col < self.grid_size
+            and (row, col) not in body
+        }
+
+    def _ships_from_sunk_cells(self, states) -> tuple[ConfirmedShip, ...]:
+        remaining = {
+            (row, col)
+            for row in range(self.grid_size)
+            for col in range(self.grid_size)
+            if states[row][col] == CellState.SUNK
+        }
+        result: list[ConfirmedShip] = []
+        while remaining:
+            start = min(remaining)
+            queue = deque([start])
+            group = {start}
+            remaining.remove(start)
+            while queue:
+                row, col = queue.popleft()
+                for neighbor in (
+                    (row - 1, col), (row + 1, col),
+                    (row, col - 1), (row, col + 1),
+                ):
+                    if neighbor in remaining:
+                        remaining.remove(neighbor)
+                        group.add(neighbor)
+                        queue.append(neighbor)
+            ordered = tuple(sorted(group))
+            result.append(
+                ConfirmedShip(
+                    length=len(ordered),
+                    direction=(
+                        "H" if len({row for row, _col in ordered}) == 1 else "V"
+                    ),
+                    cells=ordered,
+                    safety_area=frozenset(),
+                )
+            )
+        return tuple(result)
+
+
+def apply_manual_edits(
+    session: ManualEditSession,
+    board: SonarBoard,
+    strategy: RebuildableStrategy,
+) -> ManualApplyResult:
+    """事务式写入人工棋盘事实并重建策略；失败时恢复正式状态。"""
+    if board.grid_size != session.grid_size or board.submarines != session.submarines:
+        raise ManualEditError("人工缓存与当前正式棋盘配置不一致")
+
+    session.validate_for_apply(
+        use_safety_rule=bool(strategy.use_safety_rule),
+    )
+    board_before = board.snapshot()
+    strategy_before = strategy.snapshot()
+
+    try:
+        board.replace_states(session.states)
+        strategy.rebuild_from_board(session.confirmed_ships)
+        next_cell = strategy.choose_next_cell()
+    except Exception as exc:
+        rollback_errors: list[Exception] = []
+        try:
+            board.replace_states(board_before.states)
+        except Exception as rollback_exc:
+            rollback_errors.append(rollback_exc)
+        try:
+            strategy.restore_from_snapshot(strategy_before)
+        except Exception as rollback_exc:
+            rollback_errors.append(rollback_exc)
+        if rollback_errors:
+            details = "；".join(str(item) for item in rollback_errors)
+            raise RuntimeError(f"人工修改应用失败，回滚同时失败：{details}") from exc
+        raise
+
+    return ManualApplyResult(
+        next_cell=next_cell,
+        board_snapshot=board.snapshot(),
+        strategy_snapshot=strategy.snapshot(),
+    )
+
+
+__all__ = [
+    "ManualApplyResult",
+    "ManualEditError",
+    "ManualEditSession",
+    "apply_manual_edits",
+]

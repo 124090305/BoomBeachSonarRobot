@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from flows.auto_probe_exception_recovery import (
     restart_auto_probe_once,
 )
+from controllers.game_controller import GameController
 from flows.auto_probe_recovery import (
     recover_after_miss_once,
 )
@@ -70,6 +71,44 @@ class MissPage:
 
 
 class RecoveryStopPointTests(unittest.TestCase):
+    def test_restart_loading_wait_can_stop_after_game_is_reopened(self) -> None:
+        stop_event = threading.Event()
+
+        class Adb:
+            calls: list[str] = []
+
+            def ensure_device_online(self) -> None:
+                self.calls.append("online")
+
+            def is_package_installed(self, _package: str) -> bool:
+                return True
+
+            def close_app(self, _package: str) -> None:
+                self.calls.append("close")
+
+            def delay(self, _seconds: float) -> None:
+                self.calls.append("close_wait")
+
+            def open_app(self, _package: str) -> None:
+                self.calls.append("open")
+                stop_event.set()
+
+        adb = Adb()
+        network = Mock()
+        game = GameController(adb, network=network)
+
+        with self.assertRaises(StopRequestedError):
+            game.restart_game(
+                wait_seconds=60,
+                stop_event=stop_event,
+            )
+
+        self.assertEqual(
+            adb.calls,
+            ["online", "close", "close_wait", "open"],
+        )
+        network.restore_network.assert_called_once_with()
+
     def test_miss_recovery_stops_between_network_and_click_steps(self) -> None:
         retry_match = MatchResult(
             score=0.95,
@@ -80,9 +119,9 @@ class RecoveryStopPointTests(unittest.TestCase):
             (
                 "reject_on",
                 True,
-                True,
+                False,
                 0,
-                ["reject_on"],
+                ["reject_on", "reject_off"],
             ),
             (
                 "reject_off",
@@ -163,7 +202,9 @@ class RecoveryStopPointTests(unittest.TestCase):
     def test_restart_game_finishes_before_stop_is_raised(self) -> None:
         stop_event = threading.Event()
         game = Mock()
-        game.restart_game.side_effect = stop_event.set
+        game.restart_game.side_effect = (
+            lambda **_kwargs: stop_event.set()
+        )
 
         with patch(
             "flows.auto_probe_exception_recovery.ensure_auto_probe_ready"
@@ -179,7 +220,9 @@ class RecoveryStopPointTests(unittest.TestCase):
                     stop_event=stop_event,
                 )
 
-        game.restart_game.assert_called_once_with()
+        game.restart_game.assert_called_once_with(
+            stop_event=stop_event,
+        )
         ensure_ready.assert_not_called()
 
 

@@ -11,6 +11,7 @@ from .board import (
 from .strategy import (
     ConfirmedShip,
     SonarStrategy,
+    StrategySnapshot,
 )
 
 
@@ -212,6 +213,151 @@ class CheckerboardHuntStrategy(SonarStrategy):
         """清空本轮状态；坐标映射由 SonarBoard 保留。"""
         self.board.reset()
         self._reset_reasoning_state()
+
+    def rebuild_from_board(
+        self,
+        confirmed_ships: Iterable[ConfirmedShip],
+    ) -> StrategySnapshot:
+        """根据整张棋盘事实和人工确认潜艇重新构建推理状态。"""
+        ships = self._validated_rebuild_ships(confirmed_ships)
+        remaining = Counter(self._initial_submarines)
+        blocked: set[Cell] = set()
+        rebuilt: list[ConfirmedShip] = []
+
+        for ship in ships:
+            remaining[ship.length] -= 1
+            if remaining[ship.length] == 0:
+                del remaining[ship.length]
+            safety_area = self._calc_safety_area(ship.cells)
+            rebuilt.append(
+                ConfirmedShip(
+                    length=ship.length,
+                    direction=ship.direction,
+                    cells=ship.cells,
+                    safety_area=frozenset(safety_area),
+                )
+            )
+            if self.use_safety_rule:
+                blocked.update(safety_area)
+
+        self._remaining = remaining
+        self._confirmed_ships = rebuilt
+        self._blocked_cells = blocked
+        self._pending_cell = None
+
+        # 普通 HIT 中仍可唯一推导出的完整潜艇继续由既有策略规则确认。
+        self._try_confirm_ships()
+        return self.snapshot()
+
+    def restore_from_snapshot(
+        self,
+        snapshot: StrategySnapshot,
+    ) -> None:
+        """恢复一份先前策略快照，供事务失败回滚使用。"""
+        self._remaining = Counter(snapshot.remaining_submarines)
+        self._confirmed_ships = list(snapshot.confirmed_ships)
+        self._blocked_cells = set(snapshot.excluded_cells)
+        self._pending_cell = snapshot.pending_cell
+
+    def _validated_rebuild_ships(
+        self,
+        confirmed_ships: Iterable[ConfirmedShip],
+    ) -> tuple[ConfirmedShip, ...]:
+        """校验人工确认事实并返回规范化潜艇。"""
+        snapshot = self.board.snapshot()
+        available = Counter(self._initial_submarines)
+        used: Counter[int] = Counter()
+        occupied: set[Cell] = set()
+        normalized: list[ConfirmedShip] = []
+
+        for index, raw_ship in enumerate(confirmed_ships, start=1):
+            raw_cells = tuple(raw_ship.cells)
+            if not raw_cells or len(set(raw_cells)) != len(raw_cells):
+                raise ValueError(f"第 {index} 艘潜艇格为空或存在重复")
+            for cell in raw_cells:
+                self._validate_cell(cell)
+
+            rows = {row for row, _col in raw_cells}
+            cols = {col for _row, col in raw_cells}
+            if len(rows) == 1:
+                cells = tuple(sorted(raw_cells, key=lambda item: item[1]))
+                values = [col for _row, col in cells]
+                direction = "H"
+            elif len(cols) == 1:
+                cells = tuple(sorted(raw_cells, key=lambda item: item[0]))
+                values = [row for row, _col in cells]
+                direction = "V"
+            else:
+                raise ValueError(f"第 {index} 艘潜艇只能横向或纵向")
+
+            if values != list(range(values[0], values[0] + len(values))):
+                raise ValueError(f"第 {index} 艘潜艇格不连续")
+
+            length = len(cells)
+            if available[length] <= 0:
+                raise ValueError(f"长度 {length} 不属于当前潜艇配置")
+            used[length] += 1
+            if used[length] > available[length]:
+                raise ValueError(f"长度 {length} 的潜艇数量超过关卡配置")
+
+            overlap = occupied.intersection(cells)
+            if overlap:
+                raise ValueError(f"已确认潜艇发生重叠：{sorted(overlap)}")
+
+            for row, col in cells:
+                state = snapshot.states[row][col]
+                if state == CellState.MISS:
+                    raise ValueError(f"已确认潜艇内部包含 MISS：{(row, col)}")
+                if state != CellState.SUNK:
+                    raise ValueError(
+                        f"已确认潜艇与棋盘状态冲突：{(row, col)}={state.value}"
+                    )
+
+            occupied.update(cells)
+            normalized.append(
+                ConfirmedShip(
+                    length=length,
+                    direction=direction,
+                    cells=cells,
+                    safety_area=frozenset(),
+                )
+            )
+
+        sunk_cells = {
+            (row, col)
+            for row in range(snapshot.grid_size)
+            for col in range(snapshot.grid_size)
+            if snapshot.states[row][col] == CellState.SUNK
+        }
+        if sunk_cells != occupied:
+            uncovered = sorted(sunk_cells - occupied)
+            missing = sorted(occupied - sunk_cells)
+            raise ValueError(
+                "SUNK 格与已确认潜艇记录不一致："
+                f"未归属={uncovered}，缺少SUNK={missing}"
+            )
+
+        if self.use_safety_rule:
+            for index, ship in enumerate(normalized, start=1):
+                safety = self._calc_safety_area(ship.cells)
+                conflicting_ships = safety.intersection(occupied)
+                if conflicting_ships:
+                    raise ValueError(
+                        f"第 {index} 艘潜艇与其他已确认潜艇违反安全间距："
+                        f"{sorted(conflicting_ships)}"
+                    )
+                conflicting_hits = {
+                    cell
+                    for cell in safety
+                    if snapshot.states[cell[0]][cell[1]] == CellState.HIT
+                }
+                if conflicting_hits:
+                    raise ValueError(
+                        f"第 {index} 艘潜艇安全区域存在 HIT："
+                        f"{sorted(conflicting_hits)}"
+                    )
+
+        return tuple(normalized)
 
     # =========================================================
     # Hunt：固定棋盘颜色遍历

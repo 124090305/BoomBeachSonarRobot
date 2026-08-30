@@ -27,8 +27,12 @@ class AppActions:
     toggle_reject_network: Action
     restore_network: Action
     check_network_state: Action
-    start_auto_loop: Action
-    stop_auto_loop: Action
+    toggle_auto_loop: Action
+    toggle_manual_intervention: Action
+    undo_manual_edit: Action
+    redo_manual_edit: Action
+    discard_manual_changes: Action
+    apply_manual_changes: Action
     reset_sonar_board: Action
 
 
@@ -36,10 +40,17 @@ class AppActions:
 class AppLayout:
     """主窗口后续需要更新的控件引用。"""
 
+    apply_device_button: ttk.Button
     restart_game_button: tk.Button
     weak_network_button: tk.Button
     reject_network_button: tk.Button
     auto_loop_button: tk.Button
+    manual_intervention_button: tk.Button
+    reset_board_button: ttk.Button
+    manual_edit_toolbar: ttk.Frame
+    manual_undo_button: ttk.Button
+    manual_redo_button: ttk.Button
+    manual_apply_button: ttk.Button
     log_text: tk.Text
     board_view: SonarBoardView
 
@@ -87,11 +98,12 @@ def build_app_layout(
         padx=(8, 8),
     )
 
-    ttk.Button(
+    apply_device_button = ttk.Button(
         container,
         text="应用设备",
         command=actions.apply_device,
-    ).grid(
+    )
+    apply_device_button.grid(
         row=0,
         column=2,
     )
@@ -220,7 +232,7 @@ def build_app_layout(
     auto_loop_button = tk.Button(
         auto_loop_section,
         text="启动循环",
-        command=actions.start_auto_loop,
+        command=actions.toggle_auto_loop,
     )
     auto_loop_button.pack(
         side=tk.LEFT,
@@ -310,12 +322,23 @@ def build_app_layout(
         pady=(0, 8),
     )
 
-    ttk.Button(
+    reset_board_button = ttk.Button(
         board_actions,
         text="重置棋盘状态",
         command=actions.reset_sonar_board,
-    ).pack(
+    )
+    reset_board_button.pack(
         side=tk.LEFT,
+    )
+
+    manual_intervention_button = tk.Button(
+        board_actions,
+        text="开启人工干预",
+        command=actions.toggle_manual_intervention,
+    )
+    manual_intervention_button.pack(
+        side=tk.LEFT,
+        padx=(8, 0),
     )
 
     ttk.Label(
@@ -328,6 +351,31 @@ def build_app_layout(
         side=tk.LEFT,
         padx=(12, 0),
     )
+
+    manual_edit_toolbar = ttk.Frame(board_section)
+    manual_undo_button = ttk.Button(
+        manual_edit_toolbar,
+        text="撤回",
+        command=actions.undo_manual_edit,
+    )
+    manual_undo_button.pack(side=tk.LEFT, padx=(0, 6))
+    manual_redo_button = ttk.Button(
+        manual_edit_toolbar,
+        text="重做",
+        command=actions.redo_manual_edit,
+    )
+    manual_redo_button.pack(side=tk.LEFT, padx=(0, 6))
+    ttk.Button(
+        manual_edit_toolbar,
+        text="取消修改",
+        command=actions.discard_manual_changes,
+    ).pack(side=tk.LEFT, padx=(0, 6))
+    manual_apply_button = ttk.Button(
+        manual_edit_toolbar,
+        text="应用修改",
+        command=actions.apply_manual_changes,
+    )
+    manual_apply_button.pack(side=tk.LEFT)
 
     board_view = SonarBoardView(
         board_section,
@@ -356,10 +404,17 @@ def build_app_layout(
     )
 
     return AppLayout(
+        apply_device_button=apply_device_button,
         restart_game_button=restart_game_button,
         weak_network_button=weak_network_button,
         reject_network_button=reject_network_button,
         auto_loop_button=auto_loop_button,
+        manual_intervention_button=manual_intervention_button,
+        reset_board_button=reset_board_button,
+        manual_edit_toolbar=manual_edit_toolbar,
+        manual_undo_button=manual_undo_button,
+        manual_redo_button=manual_redo_button,
+        manual_apply_button=manual_apply_button,
         log_text=log_text,
         board_view=board_view,
     )

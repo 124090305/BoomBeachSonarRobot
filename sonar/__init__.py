@@ -16,6 +16,12 @@ from .strategy import (
 from .checkerboard_strategy import (
     CheckerboardHuntStrategy,
 )
+from .manual_intervention import (
+    ManualApplyResult,
+    ManualEditError,
+    ManualEditSession,
+    apply_manual_edits,
+)
 
 
 __all__ = [
@@ -29,4 +35,8 @@ __all__ = [
     "SonarStrategy",
     "StrategySnapshot",
     "CheckerboardHuntStrategy",
+    "ManualApplyResult",
+    "ManualEditError",
+    "ManualEditSession",
+    "apply_manual_edits",
 ]

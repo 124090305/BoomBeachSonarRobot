@@ -408,6 +408,14 @@ def recover_after_miss_once(
         )
 
     except StopRequestedError:
+        if reject_enabled_by_flow:
+            try:
+                network.disable_reject_network()
+                reject_enabled_by_flow = False
+            except Exception:
+                logger.exception(
+                    "响应停止请求时关闭 REJECT 失败"
+                )
         raise
 
     except Exception:

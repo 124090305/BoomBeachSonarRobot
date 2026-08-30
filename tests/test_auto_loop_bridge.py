@@ -21,6 +21,26 @@ def bridge_context():
 
 
 class AutoLoopBridgeTests(unittest.TestCase):
+    def test_mark_finished_waits_until_thread_is_really_dead(self) -> None:
+        bridge = AutoProbeLoopBridge(bridge_context())
+        started = threading.Event()
+        release = threading.Event()
+
+        def worker() -> None:
+            started.set()
+            release.wait(1.0)
+
+        bridge.thread = threading.Thread(target=worker)
+        bridge.thread.start()
+        self.assertTrue(started.wait(1.0))
+
+        self.assertFalse(bridge.mark_finished())
+        self.assertIsNotNone(bridge.thread)
+        release.set()
+        bridge.thread.join(1.0)
+        self.assertTrue(bridge.mark_finished())
+        self.assertIsNone(bridge.thread)
+
     def test_requested_summary_preserves_network_state(self) -> None:
         context = bridge_context()
         bridge = AutoProbeLoopBridge(

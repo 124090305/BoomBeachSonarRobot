@@ -67,8 +67,13 @@ class AutoProbeLoopBridge:
     def get_event_nowait(self) -> AutoLoopEvent:
         return self.events.get_nowait()
 
-    def mark_finished(self) -> None:
+    def mark_finished(self) -> bool:
+        """仅在线程真正退出后清除引用。"""
+        thread = self.thread
+        if thread is not None and thread.is_alive():
+            return False
         self.thread = None
+        return True
 
     def wait(
         self,
@@ -87,6 +92,7 @@ class AutoProbeLoopBridge:
         """关闭程序时等待后台退出，再独占恢复网络。"""
         self.request_stop()
         self.wait(timeout=None)
+        self.mark_finished()
 
         context = self.context
 

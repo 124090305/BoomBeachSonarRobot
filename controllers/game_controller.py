@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 
 import config
 from controllers.adb_controller import (
@@ -10,6 +11,7 @@ from controllers.network_controller import (
     NetworkController,
 )
 from logger import get_logger
+from stop_control import interruptible_wait, raise_if_stop_requested
 
 
 logger = get_logger(__name__)
@@ -62,8 +64,11 @@ class GameController:
     def restart_game(
         self,
         wait_seconds: float = config.GAME_RESTART_DELAY,
+        *,
+        stop_event: Event | None = None,
     ) -> None:
         """关闭游戏、恢复网络，然后重新启动游戏。"""
+        raise_if_stop_requested(stop_event)
         logger.info(
             "开始重启游戏：%s",
             self.package_name,
@@ -90,10 +95,8 @@ class GameController:
             self.package_name
         )
 
-        # 4. 等待加载
-        self.adb.delay(
-            wait_seconds
-        )
+        # 4. 游戏已经重新拉起，后续加载等待允许响应停止。
+        interruptible_wait(wait_seconds, stop_event)
 
         logger.info(
             "游戏重启完成，已等待 %.1f 秒",

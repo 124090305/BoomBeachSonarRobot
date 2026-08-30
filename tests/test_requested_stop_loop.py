@@ -125,7 +125,9 @@ class RequestedStopLoopTests(unittest.TestCase):
             summary.stop_reason,
             "requested",
         )
-        game.restart_game.assert_called_once_with()
+        game.restart_game.assert_called_once_with(
+            stop_event=stop_event,
+        )
         ensure_ready.assert_called_once()
         network.restore_network.assert_not_called()
 

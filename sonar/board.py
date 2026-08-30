@@ -224,6 +224,35 @@ class SonarBoard:
             if changed:
                 self._touch()
 
+    def replace_states(
+        self,
+        states: Iterable[Iterable[CellState]],
+    ) -> None:
+        """一次性替换整张棋盘状态，保留模拟器坐标映射。"""
+        normalized = tuple(
+            tuple(
+                state if isinstance(state, CellState) else CellState(state)
+                for state in row
+            )
+            for row in states
+        )
+
+        if len(normalized) != self.grid_size or any(
+            len(row) != self.grid_size
+            for row in normalized
+        ):
+            raise ValueError(
+                "整盘状态尺寸错误："
+                f"需要 {self.grid_size}×{self.grid_size}"
+            )
+
+        with self._lock:
+            current = tuple(tuple(row) for row in self._states)
+            if current == normalized:
+                return
+            self._states = [list(row) for row in normalized]
+            self._touch()
+
     # =========================================================
     # 逻辑格子 <-> 模拟器坐标
     # =========================================================
