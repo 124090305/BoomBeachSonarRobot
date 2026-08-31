@@ -9,7 +9,9 @@ from .board import (
 
 from .strategy import (
     ConfirmedShip,
+    StrategyCommitResult,
     SonarStrategy,
+    SunkCandidateValidation,
     StrategySnapshot,
 )
 
@@ -32,7 +34,9 @@ __all__ = [
     "Quad",
     "SonarBoard",
     "ConfirmedShip",
+    "StrategyCommitResult",
     "SonarStrategy",
+    "SunkCandidateValidation",
     "StrategySnapshot",
     "CheckerboardHuntStrategy",
     "ManualApplyResult",

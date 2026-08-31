@@ -305,7 +305,11 @@ def run_auto_probe_loop(
             "连续循环第 %s 发完成：cell=%s -> %s，next=%s",
             rounds,
             result.context.cell,
-            "HIT" if result.hit else "MISS",
+            getattr(
+                getattr(result, "outcome", None),
+                "value",
+                "HIT" if result.hit else "MISS",
+            ),
             result.next_cell,
         )
 

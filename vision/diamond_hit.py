@@ -24,6 +24,7 @@ class DiamondHitConfig:
     diamond_w: int = 80
     diamond_h: int = 56
     search_radius: int = 14
+    max_refine_radius: int = 5
     refine_step: int = 1
 
     inner_scale: float = 0.72
@@ -46,9 +47,14 @@ class DiamondHitConfig:
 
     probe_offsets: tuple[tuple[int, int], ...] = (
         (0, 0),
-        (0, 28),
-        (12, 20),
-        (18, 12),
+        (0, -9),
+        (0, 9),
+        (-12, 0),
+        (12, 0),
+        (-8, -6),
+        (8, -6),
+        (-8, 6),
+        (8, 6),
     )
     se_probe_min_gray: float = 0.80
     se_probe_max_s: float = 50.0
@@ -89,6 +95,19 @@ class DiamondHitConfig:
     white_v_min: int = 125
     min_white_cover_ratio: float = 0.28
 
+    ship_inside_scale: float = 0.72
+    ship_boundary_outer_scale: float = 1.06
+    ship_outside_outer_scale: float = 1.18
+    min_inside_ship_ratio: float = 0.10
+    min_boundary_ship_ratio: float = 0.025
+    min_outside_ship_ratio: float = 0.012
+    min_cross_boundary_score: float = 0.55
+    min_cross_component_pixels: int = 4
+    cross_direction_aspect_ratio: float = 1.25
+
+    ambiguous_confidence_threshold: float = 0.68
+    ambiguous_score_margin: float = 0.08
+
     debug: bool = False
     debug_dir: str = "debug_diamond_pair"
 
@@ -111,6 +130,13 @@ class DiamondHitResult:
     s_ring: float
     s_drop: float
     edge_density: float
+    best_probe_offset: Point = (0, 0)
+    inside_ship_ratio: float = 0.0
+    boundary_ship_ratio: float = 0.0
+    outside_ship_ratio: float = 0.0
+    cross_boundary_score: float = 0.0
+    cross_boundary_direction: str | None = None
+    sunk_candidate: bool = False
 
 
 def is_diamond_hit(
@@ -153,36 +179,42 @@ def classify_diamond_hit(
     config = config or DiamondHitConfig()
     rough_center = _to_point(center)
 
-    # 先测原始格点；原始中心偏空时，再向格子内部补几个探针。
-    probe_config = replace(config, search_radius=0)
-    origin = _measure_cell_metrics(
-        before_screenshot,
-        after_screenshot,
-        rough_center,
-        probe_config,
+    # 探针保持九宫格对称；每个探针只允许在格内小范围细化。
+    limited_radius = max(
+        0,
+        min(
+            int(config.search_radius),
+            int(config.max_refine_radius),
+            max(1, int(config.diamond_w * 0.10)),
+            max(1, int(config.diamond_h * 0.14)),
+        ),
     )
-    best = origin
+    probe_config = replace(
+        config,
+        search_radius=limited_radius,
+    )
+    measured: list[dict] = []
 
-    if origin["center_gray_ratio"] < 0.60:
-        for dx, dy in config.probe_offsets:
-            if dx == 0 and dy == 0:
-                continue
+    for dx, dy in config.probe_offsets:
+        candidate = _measure_cell_metrics(
+            before_screenshot,
+            after_screenshot,
+            (rough_center[0] + dx, rough_center[1] + dy),
+            probe_config,
+        )
+        candidate["best_probe_offset"] = (dx, dy)
+        candidate["probe_rank"] = _probe_rank(
+            candidate,
+            config,
+            dx=dx,
+            dy=dy,
+        )
+        measured.append(candidate)
 
-            candidate = _measure_cell_metrics(
-                before_screenshot,
-                after_screenshot,
-                (rough_center[0] + dx, rough_center[1] + dy),
-                probe_config,
-            )
-
-            if (
-                candidate["center_gray_ratio"] >= config.se_probe_min_gray
-                and candidate["s_center"] <= config.se_probe_max_s
-                and candidate["gray_excess"] >= config.se_probe_min_excess
-                and candidate["s_drop"] >= config.se_probe_min_s_drop
-                and candidate["center_gray_ratio"] > best["center_gray_ratio"]
-            ):
-                best = candidate
+    best = max(
+        measured,
+        key=lambda item: item["probe_rank"],
+    )
 
     center_gray_ratio = best["center_gray_ratio"]
     ring_gray_ratio = best["ring_gray_ratio"]
@@ -193,6 +225,11 @@ def classify_diamond_hit(
     s_ring = best["s_ring"]
     s_drop = best["s_drop"]
     edge_density = best["edge_density"]
+    inside_ship_ratio = best["inside_ship_ratio"]
+    boundary_ship_ratio = best["boundary_ship_ratio"]
+    outside_ship_ratio = best["outside_ship_ratio"]
+    cross_boundary_score = best["cross_boundary_score"]
+    cross_boundary_direction = best["cross_boundary_direction"]
     white_cover_ratio = best["white_cover_ratio"]
     border_white_ratio = best["border_white_ratio"]
     mean_v = best["mean_v"]
@@ -206,62 +243,87 @@ def classify_diamond_hit(
     score += score_piece(edge_density, config.min_edge_density, 0.10)
     score = max(0.0, min(1.0, score))
 
-    is_hit = False
-
-    if (
+    hull_feature = (
         center_gray_ratio >= config.min_hull_gray_ratio
         and gray_excess <= config.max_hull_gray_excess
         and s_center <= config.max_hull_s
-    ):
-        is_hit = True
-
-    elif (
+    )
+    metal_feature = (
         center_gray_ratio >= config.min_metal_gray_ratio
         and s_center <= config.max_metal_s
         and gray_excess >= config.min_metal_gray_excess
         and s_drop >= config.min_metal_s_drop
-    ):
-        is_hit = True
-
-    elif (
+    )
+    wreck_feature = (
         center_gray_ratio >= config.min_wreck_gray_ratio
         and edge_density >= config.min_wreck_edge_density
         and s_center <= config.max_metal_s
-    ):
-        is_hit = True
-
-    elif (
+    )
+    moderate_feature = (
         center_gray_ratio >= 0.08
         and center_gray_ratio < config.min_metal_gray_ratio
         and changed_ratio >= config.min_changed_ratio
         and s_center < config.miss_min_s
-        and (
-            component_ratio >= 0.02
-            or edge_density >= 0.08
-            or gray_excess >= 0.04
-        )
-    ):
-        is_hit = True
-
-    elif (
+    )
+    compact_gray_feature = (
         center_gray_ratio >= 0.28
         and changed_ratio >= config.min_changed_ratio
         and s_center <= config.max_metal_s
-    ):
-        is_hit = True
+    )
 
-    # 综合分兜底：
-    # 前后画面确实发生了足够变化，并且多个 HIT 特征综合分很高时，
-    # 不再让后面的 unopened 白色规则覆盖这次强 HIT。
-    elif (
+    supporting_features = sum(
+        (
+            center_gray_ratio >= config.min_center_gray_ratio,
+            gray_excess >= config.min_gray_excess,
+            component_ratio >= config.min_component_ratio,
+            s_drop >= config.min_s_drop,
+            edge_density >= config.min_edge_density,
+            inside_ship_ratio >= config.min_inside_ship_ratio,
+        )
+    )
+    strong_features = sum(
+        (
+            hull_feature,
+            metal_feature,
+            wreck_feature,
+            compact_gray_feature,
+        )
+    )
+    is_hit = (
         changed_ratio >= config.min_changed_ratio
-        and score >= config.hit_score_threshold
-    ):
-        is_hit = True
+        and (
+            strong_features >= 1
+            or (
+                moderate_feature
+                and supporting_features >= 3
+            )
+            or (
+                score >= config.hit_score_threshold
+                and supporting_features >= 4
+            )
+        )
+    )
+
+    sunk_candidate = (
+        is_hit
+        and cross_boundary_direction in {"H", "V"}
+        and inside_ship_ratio >= config.min_inside_ship_ratio
+        and boundary_ship_ratio >= config.min_boundary_ship_ratio
+        and outside_ship_ratio >= config.min_outside_ship_ratio
+        and cross_boundary_score >= config.min_cross_boundary_score
+    )
 
     if is_hit:
         state = "hit"
-        confidence = min(1.0, center_gray_ratio)
+        confidence = min(
+            1.0,
+            max(
+                score,
+                center_gray_ratio,
+                0.55 + 0.10 * strong_features,
+                0.45 + 0.08 * supporting_features,
+            ),
+        )
 
     elif (
         s_center >= config.miss_min_s
@@ -339,9 +401,14 @@ def classify_diamond_hit(
                 f"V={mean_v:.1f} "
                 f"Vrel={v_rel:.1f} "
                 f"ex={gray_excess:.3f} "
-                f"comp={component_ratio:.3f} "
-                f"sdrop={s_drop:.1f} "
-                f"edge={edge_density:.3f}"
+                 f"comp={component_ratio:.3f} "
+                 f"sdrop={s_drop:.1f} "
+                 f"edge={edge_density:.3f} "
+                 f"inside={inside_ship_ratio:.3f} "
+                 f"boundary={boundary_ship_ratio:.3f} "
+                 f"outside={outside_ship_ratio:.3f} "
+                 f"cross={cross_boundary_score:.3f}/"
+                 f"{cross_boundary_direction or '-'}"
             ),
             config=config,
             index=index,
@@ -362,6 +429,13 @@ def classify_diamond_hit(
         s_ring=s_ring,
         s_drop=s_drop,
         edge_density=edge_density,
+        best_probe_offset=best["best_probe_offset"],
+        inside_ship_ratio=inside_ship_ratio,
+        boundary_ship_ratio=boundary_ship_ratio,
+        outside_ship_ratio=outside_ship_ratio,
+        cross_boundary_score=cross_boundary_score,
+        cross_boundary_direction=cross_boundary_direction,
+        sunk_candidate=sunk_candidate,
     )
 
 
@@ -398,7 +472,12 @@ def classify_diamond_hit_multiframe(
     if hit_frames:
         return max(
             hit_frames,
-            key=lambda item: item.center_gray_ratio,
+            key=lambda item: (
+                item.sunk_candidate,
+                item.cross_boundary_score,
+                item.score,
+                item.center_gray_ratio,
+            ),
         )
 
     chosen_state = majority_cell_state(
@@ -410,6 +489,21 @@ def classify_diamond_hit_multiframe(
             return item
 
     return results[0]
+
+
+def needs_multiframe_confirmation(
+    result: DiamondHitResult,
+    config: DiamondHitConfig,
+) -> bool:
+    """判断单帧是否处于需要第二帧确认的模糊区。"""
+    if result.state in {"unknown", "unopened"}:
+        return True
+    return (
+        result.confidence < config.ambiguous_confidence_threshold
+        and result.state in {"hit", "miss"}
+        and abs(result.score - config.hit_score_threshold)
+        <= config.ambiguous_score_margin
+    )
 
 
 def majority_cell_state(states: list[str]) -> str:
@@ -769,6 +863,76 @@ def _measure_cell_metrics(
         center_mask,
     )
 
+    changed_support = cv2.dilate(
+        changed_mask,
+        cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (5, 5),
+        ),
+        iterations=1,
+    )
+    ship_candidate = cv2.bitwise_and(
+        gray_candidate,
+        changed_support,
+    )
+    ship_inner_mask = make_diamond_mask(
+        (h, w),
+        local_center,
+        config.diamond_w,
+        config.diamond_h,
+        config.ship_inside_scale,
+    )
+    ship_full_mask = make_diamond_mask(
+        (h, w),
+        local_center,
+        config.diamond_w,
+        config.diamond_h,
+        1.0,
+    )
+    ship_boundary_outer = make_diamond_mask(
+        (h, w),
+        local_center,
+        config.diamond_w,
+        config.diamond_h,
+        config.ship_boundary_outer_scale,
+    )
+    ship_outside_outer = make_diamond_mask(
+        (h, w),
+        local_center,
+        config.diamond_w,
+        config.diamond_h,
+        config.ship_outside_outer_scale,
+    )
+    ship_boundary_mask = cv2.subtract(
+        ship_boundary_outer,
+        ship_inner_mask,
+    )
+    ship_outside_mask = cv2.subtract(
+        ship_outside_outer,
+        ship_full_mask,
+    )
+    inside_ship_ratio = ratio_in_mask(
+        ship_candidate,
+        ship_inner_mask,
+    )
+    boundary_ship_ratio = ratio_in_mask(
+        ship_candidate,
+        ship_boundary_mask,
+    )
+    outside_ship_ratio = ratio_in_mask(
+        ship_candidate,
+        ship_outside_mask,
+    )
+    cross_boundary_score, cross_boundary_direction = (
+        _measure_cross_boundary(
+            ship_candidate,
+            ship_inner_mask,
+            ship_boundary_mask,
+            ship_outside_mask,
+            config,
+        )
+    )
+
     return {
         "refined_center": refined_center,
         "before_crop": before_crop,
@@ -792,7 +956,106 @@ def _measure_cell_metrics(
         "edge_density": edge_density,
         "mean_v": mean_v,
         "v_rel": v_rel,
+        "inside_ship_ratio": inside_ship_ratio,
+        "boundary_ship_ratio": boundary_ship_ratio,
+        "outside_ship_ratio": outside_ship_ratio,
+        "cross_boundary_score": cross_boundary_score,
+        "cross_boundary_direction": cross_boundary_direction,
     }
+
+
+def _measure_cross_boundary(
+    ship_candidate: np.ndarray,
+    inside_mask: np.ndarray,
+    boundary_mask: np.ndarray,
+    outside_mask: np.ndarray,
+    config: DiamondHitConfig,
+) -> tuple[float, str | None]:
+    """寻找同时穿过格内、边界和格外的同一船体连通区域。"""
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
+        ship_candidate,
+        connectivity=8,
+    )
+    best_score = 0.0
+    best_direction: str | None = None
+    min_pixels = max(1, int(config.min_cross_component_pixels))
+
+    for label in range(1, count):
+        component = labels == label
+        inside_pixels = int(np.count_nonzero(component & (inside_mask > 0)))
+        boundary_pixels = int(np.count_nonzero(component & (boundary_mask > 0)))
+        outside_pixels = int(np.count_nonzero(component & (outside_mask > 0)))
+        if min(inside_pixels, boundary_pixels, outside_pixels) < min_pixels:
+            continue
+
+        component_mask = component.astype(np.uint8) * 255
+        inside_ratio = ratio_in_mask(component_mask, inside_mask)
+        boundary_ratio = ratio_in_mask(component_mask, boundary_mask)
+        outside_ratio = ratio_in_mask(component_mask, outside_mask)
+        score = (
+            0.40
+            * min(
+                1.0,
+                inside_ratio / max(config.min_inside_ship_ratio, 1e-6),
+            )
+            + 0.30
+            * min(
+                1.0,
+                boundary_ratio / max(config.min_boundary_ship_ratio, 1e-6),
+            )
+            + 0.30
+            * min(
+                1.0,
+                outside_ratio / max(config.min_outside_ship_ratio, 1e-6),
+            )
+        )
+
+        width = int(stats[label, cv2.CC_STAT_WIDTH])
+        height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        aspect = float(config.cross_direction_aspect_ratio)
+        if width >= max(1.0, height * aspect):
+            direction = "H"
+        elif height >= max(1.0, width * aspect):
+            direction = "V"
+        else:
+            direction = None
+
+        if score > best_score:
+            best_score = score
+            best_direction = direction
+
+    return min(1.0, best_score), best_direction
+
+
+def _probe_rank(
+    metrics: dict,
+    config: DiamondHitConfig,
+    *,
+    dx: int,
+    dy: int,
+) -> float:
+    """用多项目标特征选择最有信息量的对称探针。"""
+    rank = 0.0
+    rank += 2.0 * metrics["center_gray_ratio"]
+    rank += 1.2 * metrics["component_ratio"]
+    rank += 0.8 * metrics["changed_ratio"]
+    rank += 0.6 * metrics["edge_density"]
+    rank += 0.8 * metrics["inside_ship_ratio"]
+    rank += 0.3 * metrics["cross_boundary_score"]
+    rank += 0.004 * max(0.0, metrics["s_drop"])
+    if (
+        metrics["center_gray_ratio"] >= config.se_probe_min_gray
+        and metrics["s_center"] <= config.se_probe_max_s
+        and metrics["gray_excess"] >= config.se_probe_min_excess
+        and metrics["s_drop"] >= config.se_probe_min_s_drop
+    ):
+        rank += 0.30
+
+    distance = (
+        abs(dx) / max(1.0, config.diamond_w / 2.0)
+        + abs(dy) / max(1.0, config.diamond_h / 2.0)
+    )
+    return rank - 0.08 * distance
 
 
 def refine_center_by_pair(
@@ -1141,4 +1404,5 @@ __all__ = [
     "classify_diamond_pair",
     "is_diamond_hit",
     "majority_cell_state",
+    "needs_multiframe_confirmation",
 ]

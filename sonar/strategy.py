@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import FrozenSet
 
-from .board import Cell, SonarBoard
+from .board import Cell, CellState, SonarBoard
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,28 @@ class ConfirmedShip:
     direction: str
     cells: tuple[Cell, ...]
     safety_area: FrozenSet[Cell]
+
+
+@dataclass(frozen=True)
+class SunkCandidateValidation:
+    """视觉 SUNK 候选经过策略校验后的明细。"""
+
+    direction: str
+    hit_cells: tuple[Cell, ...]
+    candidate_length: int
+    remaining_submarines: tuple[int, ...]
+    valid: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class StrategyCommitResult:
+    """一次识别结果写入策略后的正式状态。"""
+
+    final_state: CellState
+    newly_confirmed: tuple[ConfirmedShip, ...]
+    confirmation_source: str | None = None
+    sunk_validation: SunkCandidateValidation | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +155,33 @@ class SonarStrategy(ABC):
         hit: bool,
     ) -> tuple[ConfirmedShip, ...]:
         """写入一次真实探测结果，并返回本次新确认的潜艇。"""
+
+    def report_recognition_result(
+        self,
+        cell: Cell,
+        *,
+        hit: bool,
+        sunk_direction: str | None = None,
+    ) -> StrategyCommitResult:
+        """写入视觉结果；基础策略忽略 SUNK 方向提示。"""
+        del sunk_direction
+        newly_confirmed = tuple(
+            self.report_result(
+                cell,
+                hit=hit,
+            )
+        )
+        row, col = cell
+        final_state = self.board.get_state(row, col)
+        return StrategyCommitResult(
+            final_state=final_state,
+            newly_confirmed=newly_confirmed,
+            confirmation_source=(
+                "inference"
+                if final_state == CellState.SUNK
+                else None
+            ),
+        )
 
     @abstractmethod
     def reset(self) -> None:

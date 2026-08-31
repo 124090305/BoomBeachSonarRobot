@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from threading import Event
 from typing import Callable
@@ -13,9 +14,11 @@ from controllers.page_controller import PageController
 from logger import get_logger
 from sonar import (
     Cell,
+    CellState,
     ConfirmedShip,
     SonarBoard,
     SonarStrategy,
+    StrategyCommitResult,
 )
 from sonar_config import (
     ACTIVITY_PAGE_CONFIG,
@@ -26,6 +29,8 @@ from vision import (
     DiamondHitConfig,
     DiamondHitResult,
     classify_diamond_hit,
+    classify_diamond_hit_multiframe,
+    needs_multiframe_confirmation,
 )
 
 from .auto_probe_ready import ensure_auto_probe_ready
@@ -46,6 +51,14 @@ from .probe_flow import (
 logger = get_logger(__name__)
 
 
+class ProbeOutcome(str, Enum):
+    """自动单格提交后的正式结果。"""
+
+    MISS = "MISS"
+    HIT = "HIT"
+    SUNK = "SUNK"
+
+
 @dataclass(frozen=True)
 class AutoProbeOnceResult:
     """完整自动一发探测的结果。"""
@@ -53,6 +66,7 @@ class AutoProbeOnceResult:
     context: ProbeContext
     recognition: DiamondHitResult
     hit: bool
+    outcome: ProbeOutcome
     newly_confirmed: tuple[ConfirmedShip, ...]
     recovery: ProbeRecoveryResult
     next_cell: Cell | None
@@ -65,6 +79,7 @@ class AutoProbeCommittedResult:
     context: ProbeContext
     recognition: DiamondHitResult
     hit: bool
+    outcome: ProbeOutcome
     newly_confirmed: tuple[ConfirmedShip, ...]
 
 
@@ -84,6 +99,7 @@ class AutoProbeProgress:
     context: ProbeContext | None = None
     recognition: DiamondHitResult | None = None
     hit: bool | None = None
+    outcome: ProbeOutcome | None = None
     newly_confirmed: tuple[ConfirmedShip, ...] = ()
     result_committed: bool = False
     result_notified: bool = False
@@ -101,6 +117,7 @@ class AutoProbeProgress:
             self.context = None
             self.recognition = None
             self.hit = None
+            self.outcome = None
             self.newly_confirmed = ()
             self.result_committed = False
             self.result_notified = False
@@ -138,7 +155,7 @@ def is_hit_recognition_state(
     state: str,
 ) -> bool:
     """只有 diamond_hit 的 hit 状态按 HIT 写回策略。"""
-    return str(state).strip().lower() == "hit"
+    return str(state).strip().lower() in {"hit", "sunk"}
 
 
 def is_conclusive_recognition_state(
@@ -148,6 +165,7 @@ def is_conclusive_recognition_state(
     return str(state).strip().lower() in {
         "hit",
         "miss",
+        "sunk",
     }
 
 
@@ -210,6 +228,37 @@ def _complete_recognition_and_sync(
             index=int(recognition_index),
         )
 
+        second_frame_reader = getattr(
+            adb,
+            "read_screenshot",
+            None,
+        )
+        if (
+            callable(second_frame_reader)
+            and needs_multiframe_confirmation(
+            actual_progress.recognition,
+            classifier_config,
+            )
+        ):
+            logger.info(
+                "单帧识别处于模糊区，采集第二帧确认："
+                "cell=%s，state=%s，confidence=%.3f，score=%.3f",
+                context.cell,
+                actual_progress.recognition.state,
+                actual_progress.recognition.confidence,
+                actual_progress.recognition.score,
+            )
+            second_after = second_frame_reader()
+            actual_progress.recognition = (
+                classify_diamond_hit_multiframe(
+                    before_screenshot=before,
+                    after_screenshots=[after, second_after],
+                    center=context.screen_point,
+                    config=classifier_config,
+                    index=int(recognition_index),
+                )
+            )
+
         recognition_state = (
             actual_progress.recognition.state
         )
@@ -238,11 +287,21 @@ def _complete_recognition_and_sync(
     logger.info(
         "自动命中判断："
         "cell=%s，state=%s，confidence=%.3f，"
-        "score=%.3f -> %s",
+        "score=%.3f，center=%s，probe_offset=%s，"
+        "inside=%.3f，boundary=%.3f，outside=%.3f，"
+        "cross=%.3f，direction=%s，sunk_candidate=%s -> %s",
         context.cell,
         recognition.state,
         recognition.confidence,
         recognition.score,
+        recognition.refined_center,
+        recognition.best_probe_offset,
+        recognition.inside_ship_ratio,
+        recognition.boundary_ship_ratio,
+        recognition.outside_ship_ratio,
+        recognition.cross_boundary_score,
+        recognition.cross_boundary_direction,
+        recognition.sunk_candidate,
         "HIT" if hit else "MISS",
     )
 
@@ -255,13 +314,65 @@ def _complete_recognition_and_sync(
                 f"pending={pending}, context={context.cell}"
             )
 
-        actual_progress.newly_confirmed = tuple(
-            strategy.report_result(
+        commit_method = getattr(
+            strategy,
+            "report_recognition_result",
+            None,
+        )
+        if callable(commit_method):
+            commit = commit_method(
                 context.cell,
                 hit=hit,
+                sunk_direction=(
+                    recognition.cross_boundary_direction
+                    if recognition.sunk_candidate
+                    else None
+                ),
             )
+        else:
+            newly_confirmed = tuple(
+                strategy.report_result(
+                    context.cell,
+                    hit=hit,
+                )
+            )
+            commit = StrategyCommitResult(
+                final_state=(
+                    CellState.HIT
+                    if hit
+                    else CellState.MISS
+                ),
+                newly_confirmed=newly_confirmed,
+            )
+
+        actual_progress.newly_confirmed = commit.newly_confirmed
+        actual_progress.outcome = (
+            ProbeOutcome.SUNK
+            if commit.final_state == CellState.SUNK
+            else ProbeOutcome.HIT
+            if hit
+            else ProbeOutcome.MISS
+        )
+        _log_sunk_validation(
+            context.cell,
+            recognition,
+            commit,
+            actual_progress.outcome,
+            strategy,
         )
         actual_progress.result_committed = True
+
+    if actual_progress.outcome is None:
+        actual_progress.outcome = (
+            ProbeOutcome.SUNK
+            if any(
+                context.cell in ship.cells
+                for ship in actual_progress.newly_confirmed
+            )
+            else ProbeOutcome.HIT
+            if hit
+            else ProbeOutcome.MISS
+        )
 
     if (
         on_result_committed is not None
@@ -272,12 +383,68 @@ def _complete_recognition_and_sync(
                 context=context,
                 recognition=recognition,
                 hit=hit,
+                outcome=(
+                    actual_progress.outcome
+                    or (
+                        ProbeOutcome.HIT
+                        if hit
+                        else ProbeOutcome.MISS
+                    )
+                ),
                 newly_confirmed=(
                     actual_progress.newly_confirmed
                 ),
             )
         )
         actual_progress.result_notified = True
+
+
+def _log_sunk_validation(
+    cell: Cell,
+    recognition: DiamondHitResult,
+    commit: StrategyCommitResult,
+    outcome: ProbeOutcome,
+    strategy: SonarStrategy,
+) -> None:
+    """记录视觉 SUNK 候选与策略确认的完整证据链。"""
+    if not recognition.sunk_candidate:
+        if commit.confirmation_source == "inference":
+            logger.info(
+                "普通 HIT 由既有唯一解释逻辑确认 SUNK："
+                "cell=%s，ships=%s",
+                cell,
+                [ship.cells for ship in commit.newly_confirmed],
+            )
+        return
+
+    validation = commit.sunk_validation
+    remaining = tuple(getattr(strategy, "remaining_submarines", ()))
+    if validation is None:
+        logger.warning(
+            "SUNK 视觉候选缺少策略校验接口："
+            "cell=%s，direction=%s，remaining=%s，final=%s",
+            cell,
+            recognition.cross_boundary_direction,
+            remaining,
+            outcome.value,
+        )
+        return
+
+    logger.info(
+        "SUNK 候选策略校验："
+        "cell=%s，visual_direction=%s，hit_cells=%s，"
+        "candidate_length=%s，remaining=%s，valid=%s，"
+        "reason=%s，source=%s，final=%s",
+        cell,
+        validation.direction,
+        validation.hit_cells,
+        validation.candidate_length,
+        validation.remaining_submarines,
+        validation.valid,
+        validation.reason,
+        commit.confirmation_source,
+        outcome.value,
+    )
 
 
 def build_default_hit_config(
@@ -388,10 +555,11 @@ def run_auto_probe_once(
 
     recognition = actual_progress.recognition
     hit = actual_progress.hit
+    outcome = actual_progress.outcome
 
-    if recognition is None or hit is None:
+    if recognition is None or hit is None or outcome is None:
         raise RuntimeError(
-            "自动探测进度缺少 HIT/MISS 判断结果"
+            "自动探测进度缺少正式 MISS/HIT/SUNK 结果"
         )
 
     newly_confirmed = actual_progress.newly_confirmed
@@ -449,6 +617,7 @@ def run_auto_probe_once(
         context=context,
         recognition=recognition,
         hit=hit,
+        outcome=outcome,
         newly_confirmed=newly_confirmed,
         recovery=recovery,
         next_cell=next_cell,
@@ -458,7 +627,7 @@ def run_auto_probe_once(
         "完整自动单发完成："
         "cell=%s -> %s，next=%s，strategy_done=%s",
         result.context.cell,
-        "HIT" if result.hit else "MISS",
+        result.outcome.value,
         result.next_cell,
         strategy.done,
     )
@@ -469,6 +638,7 @@ def run_auto_probe_once(
 __all__ = [
     "AutoProbeCommittedResult",
     "AutoProbeOnceResult",
+    "ProbeOutcome",
     "ProbeRecoveryResult",
     "build_default_hit_config",
     "ensure_auto_probe_ready",

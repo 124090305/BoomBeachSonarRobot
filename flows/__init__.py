@@ -7,6 +7,7 @@ from .activity_flow import (
 from .auto_probe_flow import (
     AutoProbeCommittedResult,
     AutoProbeOnceResult,
+    ProbeOutcome,
     build_default_hit_config,
     is_hit_recognition_state,
     run_auto_probe_once,
@@ -54,6 +55,7 @@ __all__ = [
     "AutoProbeCommittedResult",
     "AutoProbeLoopSummary",
     "AutoProbeOnceResult",
+    "ProbeOutcome",
     "LevelState",
     "ManualProbeResult",
     "MultiLevelLoopSummary",

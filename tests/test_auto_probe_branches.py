@@ -8,6 +8,8 @@ import numpy as np
 
 import flows.auto_probe_flow as auto_probe_flow
 from flows.probe_flow import ProbeContext
+from flows.auto_probe_flow import ProbeOutcome
+from sonar import CellState, CheckerboardHuntStrategy, SonarBoard
 from vision import DiamondHitResult
 
 
@@ -40,7 +42,12 @@ class FakeStrategy:
         return (4, 5)
 
 
-def make_recognition(state: str) -> DiamondHitResult:
+def make_recognition(
+    state: str,
+    *,
+    sunk_candidate: bool = False,
+    direction: str | None = None,
+) -> DiamondHitResult:
     return DiamondHitResult(
         state=state,
         confidence=0.9,
@@ -56,6 +63,12 @@ def make_recognition(state: str) -> DiamondHitResult:
         s_ring=80.0,
         s_drop=60.0,
         edge_density=0.3,
+        inside_ship_ratio=0.25,
+        boundary_ship_ratio=0.12 if sunk_candidate else 0.0,
+        outside_ship_ratio=0.08 if sunk_candidate else 0.0,
+        cross_boundary_score=0.9 if sunk_candidate else 0.0,
+        cross_boundary_direction=direction,
+        sunk_candidate=sunk_candidate,
     )
 
 
@@ -267,6 +280,95 @@ class AutoProbeRecoveryBranchTests(unittest.TestCase):
         hit_mock.assert_called_once()
         self.assertEqual(strategy.reported, ((2, 3), True))
         self.assertTrue(result.hit)
+
+    def test_visual_sunk_uses_hit_recovery_branch(self) -> None:
+        context = ProbeContext(
+            cell=(2, 2),
+            screen_point=(10, 20),
+            before_path=Path("before.png"),
+            after_path=Path("after.png"),
+        )
+        board = SonarBoard(6, (2, 3))
+        strategy = CheckerboardHuntStrategy(board)
+        board.set_state(2, 1, CellState.HIT)
+        board.select_cell(2, 2)
+        strategy._pending_cell = (2, 2)
+        recovery = object()
+
+        with (
+            patch.object(auto_probe_flow, "ensure_auto_probe_ready"),
+            patch.object(
+                auto_probe_flow,
+                "prepare_probe_once",
+                return_value=context,
+            ),
+            patch.object(
+                auto_probe_flow,
+                "classify_diamond_hit",
+                return_value=make_recognition(
+                    "hit",
+                    sunk_candidate=True,
+                    direction="H",
+                ),
+            ),
+            patch.object(
+                auto_probe_flow,
+                "recover_after_hit_once",
+                return_value=recovery,
+            ) as hit_mock,
+            patch.object(
+                auto_probe_flow,
+                "recover_after_miss_once",
+            ) as miss_mock,
+        ):
+            result = auto_probe_flow.run_auto_probe_once(
+                adb=FakeAdb(),
+                page=object(),
+                network=object(),
+                board=board,
+                strategy=strategy,
+            )
+
+        self.assertEqual(result.outcome, ProbeOutcome.SUNK)
+        self.assertTrue(result.hit)
+        self.assertEqual(board.get_state(2, 1), CellState.SUNK)
+        self.assertEqual(board.get_state(2, 2), CellState.SUNK)
+        hit_mock.assert_called_once()
+        miss_mock.assert_not_called()
+
+    def test_unopened_does_not_write_strategy_result(self) -> None:
+        context = ProbeContext(
+            cell=(2, 3),
+            screen_point=(10, 20),
+            before_path=Path("before.png"),
+            after_path=Path("after.png"),
+        )
+        strategy = FakeStrategy(done_after_report=False)
+
+        with (
+            patch.object(auto_probe_flow, "ensure_auto_probe_ready"),
+            patch.object(
+                auto_probe_flow,
+                "prepare_probe_once",
+                return_value=context,
+            ),
+            patch.object(
+                auto_probe_flow,
+                "classify_diamond_hit",
+                return_value=make_recognition("unopened"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "识别结果无效"):
+                auto_probe_flow.run_auto_probe_once(
+                    adb=FakeAdb(),
+                    page=object(),
+                    network=object(),
+                    board=object(),
+                    strategy=strategy,
+                )
+
+        self.assertIsNone(strategy.reported)
+        self.assertEqual(strategy.pending_cell, (2, 3))
 
 
 if __name__ == "__main__":

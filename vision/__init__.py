@@ -8,6 +8,7 @@ from .diamond_hit import (
     classify_diamond_pair,
     is_diamond_hit,
     majority_cell_state,
+    needs_multiframe_confirmation,
 )
 from .image_match import (
     MatchResult,
@@ -31,6 +32,7 @@ __all__ = [
     "classify_diamond_pair",
     "is_diamond_hit",
     "majority_cell_state",
+    "needs_multiframe_confirmation",
     "MatchResult",
     "find_template",
     "find_template_with_score",

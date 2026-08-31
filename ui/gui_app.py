@@ -894,7 +894,11 @@ class BoomBeachSonarApp(tk.Tk):
 
             if kind == "result":
                 index, result = payload
-                result_text = "HIT" if result.hit else "MISS"
+                result_text = getattr(
+                    getattr(result, "outcome", None),
+                    "value",
+                    "HIT" if result.hit else "MISS",
+                )
                 current = self.auto_loop_total_var.get()
 
                 try:
@@ -930,7 +934,11 @@ class BoomBeachSonarApp(tk.Tk):
 
             if kind == "round":
                 index, result = payload
-                result_text = "HIT" if result.hit else "MISS"
+                result_text = getattr(
+                    getattr(result, "outcome", None),
+                    "value",
+                    "HIT" if result.hit else "MISS",
+                )
                 self.auto_loop_last_var.set(
                     f"上一发：{result.context.cell} {result_text} | 下一格：{result.next_cell}"
                 )

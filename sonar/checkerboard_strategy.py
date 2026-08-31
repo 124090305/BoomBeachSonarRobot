@@ -11,7 +11,9 @@ from .board import (
 from .strategy import (
     ConfirmedShip,
     SonarStrategy,
+    StrategyCommitResult,
     StrategySnapshot,
+    SunkCandidateValidation,
 )
 
 
@@ -160,6 +162,75 @@ class CheckerboardHuntStrategy(SonarStrategy):
         hit = 实际探测(cell)
         strategy.report_result(cell, hit)
         """
+        recorded = self._record_probe_result(
+            cell,
+            hit=hit,
+        )
+        if not recorded:
+            return ()
+        return tuple(
+            self._try_confirm_ships()
+        )
+
+    def report_recognition_result(
+        self,
+        cell: Cell,
+        *,
+        hit: bool,
+        sunk_direction: str | None = None,
+    ) -> StrategyCommitResult:
+        """写入识别结果，并对视觉 SUNK 候选执行方向约束校验。"""
+        recorded = self._record_probe_result(
+            cell,
+            hit=hit,
+        )
+        if not recorded:
+            row, col = cell
+            return StrategyCommitResult(
+                final_state=self.board.get_state(row, col),
+                newly_confirmed=(),
+            )
+
+        visual_validation: SunkCandidateValidation | None = None
+        newly_confirmed: list[ConfirmedShip] = []
+        confirmation_source: str | None = None
+
+        if hit and sunk_direction is not None:
+            visual_validation, visual_ship = (
+                self._try_confirm_visual_sunk(
+                    cell,
+                    sunk_direction,
+                )
+            )
+            if visual_ship is not None:
+                newly_confirmed.append(visual_ship)
+                confirmation_source = "visual"
+
+        inferred = self._try_confirm_ships()
+        newly_confirmed.extend(inferred)
+
+        row, col = cell
+        final_state = self.board.get_state(row, col)
+        if (
+            final_state == CellState.SUNK
+            and confirmation_source is None
+        ):
+            confirmation_source = "inference"
+
+        return StrategyCommitResult(
+            final_state=final_state,
+            newly_confirmed=tuple(newly_confirmed),
+            confirmation_source=confirmation_source,
+            sunk_validation=visual_validation,
+        )
+
+    def _record_probe_result(
+        self,
+        cell: Cell,
+        *,
+        hit: bool,
+    ) -> bool:
+        """只写入单格事实并清除 pending，不运行潜艇确认。"""
         self._validate_cell(cell)
 
         if (
@@ -172,21 +243,12 @@ class CheckerboardHuntStrategy(SonarStrategy):
             )
 
         row, col = cell
-        current_state = self.board.get_state(
-            row,
-            col,
-        )
+        current_state = self.board.get_state(row, col)
+        expected_state = CellState.HIT if hit else CellState.MISS
 
-        expected_state = (
-            CellState.HIT
-            if hit
-            else CellState.MISS
-        )
-
-        # 允许同一个结果重复上报，方便后续流程做重试。
         if current_state == expected_state:
             self._pending_cell = None
-            return ()
+            return False
 
         if current_state in (
             CellState.HIT,
@@ -202,12 +264,8 @@ class CheckerboardHuntStrategy(SonarStrategy):
             col,
             hit=bool(hit),
         )
-
         self._pending_cell = None
-
-        newly_confirmed = self._try_confirm_ships()
-
-        return tuple(newly_confirmed)
+        return True
 
     def reset(self) -> None:
         """清空本轮状态；坐标映射由 SonarBoard 保留。"""
@@ -465,6 +523,202 @@ class CheckerboardHuntStrategy(SonarStrategy):
     # =========================================================
     # Sunk：确认潜艇和排除周围格子
     # =========================================================
+
+    def _try_confirm_visual_sunk(
+        self,
+        cell: Cell,
+        direction: str,
+    ) -> tuple[SunkCandidateValidation, ConfirmedShip | None]:
+        """按视觉方向从当前格收集连续 HIT，并要求唯一合法解释。"""
+        normalized_direction = str(direction).strip().upper()
+        if normalized_direction not in {"H", "V"}:
+            return (
+                SunkCandidateValidation(
+                    direction=normalized_direction,
+                    hit_cells=(cell,),
+                    candidate_length=1,
+                    remaining_submarines=self.remaining_submarines,
+                    valid=False,
+                    reason="视觉方向必须是 H 或 V",
+                ),
+                None,
+            )
+
+        hit_cells = self._collect_line_hits(
+            cell,
+            normalized_direction,
+        )
+        candidate_length = len(hit_cells)
+        remaining_lengths = {
+            length
+            for length, count in self._remaining.items()
+            if count > 0
+        }
+        remaining_snapshot = self.remaining_submarines
+
+        candidates: list[tuple[Cell, ...]] = []
+        current_index = hit_cells.index(cell)
+
+        for length in sorted(remaining_lengths):
+            if length > candidate_length:
+                continue
+
+            start_min = max(0, current_index - length + 1)
+            start_max = min(current_index, candidate_length - length)
+
+            for start in range(start_min, start_max + 1):
+                cells = hit_cells[start : start + length]
+                if self._is_legal_visual_ship(cells):
+                    candidates.append(cells)
+
+        unique_candidates = list(dict.fromkeys(candidates))
+
+        if not unique_candidates:
+            reason = (
+                "连续 HIT 段没有匹配剩余潜艇的合法解释；"
+                f"连续长度={candidate_length}，"
+                f"剩余={self.remaining_submarines}"
+            )
+            return (
+                SunkCandidateValidation(
+                    direction=normalized_direction,
+                    hit_cells=hit_cells,
+                    candidate_length=candidate_length,
+                    remaining_submarines=remaining_snapshot,
+                    valid=False,
+                    reason=reason,
+                ),
+                None,
+            )
+
+        if len(unique_candidates) != 1:
+            reason = (
+                "连续 HIT 段存在多个合法潜艇解释；"
+                f"候选={unique_candidates}"
+            )
+            return (
+                SunkCandidateValidation(
+                    direction=normalized_direction,
+                    hit_cells=hit_cells,
+                    candidate_length=candidate_length,
+                    remaining_submarines=remaining_snapshot,
+                    valid=False,
+                    reason=reason,
+                ),
+                None,
+            )
+
+        cells = unique_candidates[0]
+        ship = self._confirm_visual_ship(
+            cells,
+            normalized_direction,
+        )
+        return (
+            SunkCandidateValidation(
+                direction=normalized_direction,
+                hit_cells=hit_cells,
+                candidate_length=len(cells),
+                remaining_submarines=remaining_snapshot,
+                valid=True,
+                reason="唯一连续 HIT 段通过剩余潜艇与冲突校验",
+            ),
+            ship,
+        )
+
+    def _collect_line_hits(
+        self,
+        cell: Cell,
+        direction: str,
+    ) -> tuple[Cell, ...]:
+        """从当前格向视觉方向两端收集连续 HIT。"""
+        row, col = cell
+        if self.board.get_state(row, col) != CellState.HIT:
+            return (cell,)
+
+        delta = (0, 1) if direction == "H" else (1, 0)
+        cells = [cell]
+
+        for sign in (-1, 1):
+            next_row = row + delta[0] * sign
+            next_col = col + delta[1] * sign
+            extension: list[Cell] = []
+
+            while self._inside((next_row, next_col)):
+                if (
+                    self.board.get_state(next_row, next_col)
+                    != CellState.HIT
+                ):
+                    break
+                extension.append((next_row, next_col))
+                next_row += delta[0] * sign
+                next_col += delta[1] * sign
+
+            if sign < 0:
+                cells = list(reversed(extension)) + cells
+            else:
+                cells.extend(extension)
+
+        return tuple(cells)
+
+    def _is_legal_visual_ship(
+        self,
+        cells: tuple[Cell, ...],
+    ) -> bool:
+        length = len(cells)
+        if self._remaining[length] <= 0:
+            return False
+
+        if not all(
+            self.board.get_state(row, col) == CellState.HIT
+            for row, col in cells
+        ):
+            return False
+
+        if any(cell in self._blocked_cells for cell in cells):
+            return False
+
+        occupied = {
+            ship_cell
+            for ship in self._confirmed_ships
+            for ship_cell in ship.cells
+        }
+        if occupied.intersection(cells):
+            return False
+
+        if self.use_safety_rule:
+            safety_area = self._calc_safety_area(cells)
+            snapshot = self.board.snapshot()
+            for row, col in safety_area:
+                if snapshot.states[row][col] in (
+                    CellState.HIT,
+                    CellState.SUNK,
+                ):
+                    return False
+
+        return True
+
+    def _confirm_visual_ship(
+        self,
+        cells: tuple[Cell, ...],
+        direction: str,
+    ) -> ConfirmedShip:
+        length = len(cells)
+        safety_area = self._calc_safety_area(cells)
+        ship = ConfirmedShip(
+            length=length,
+            direction=direction,
+            cells=cells,
+            safety_area=frozenset(safety_area),
+        )
+
+        self.board.mark_sunk(cells)
+        self._confirmed_ships.append(ship)
+        self._remaining[length] -= 1
+        if self._remaining[length] == 0:
+            del self._remaining[length]
+        if self.use_safety_rule:
+            self._blocked_cells.update(safety_area)
+        return ship
 
     def _try_confirm_ships(self) -> list[ConfirmedShip]:
         newly_confirmed: list[ConfirmedShip] = []

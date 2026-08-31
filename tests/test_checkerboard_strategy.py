@@ -205,6 +205,88 @@ class CheckerboardHuntStrategyTests(unittest.TestCase):
             [2, 2, 3, 4, 5],
         )
 
+    def test_visual_horizontal_candidate_confirms_sunk(self) -> None:
+        board = SonarBoard(6, (2, 3))
+        strategy = CheckerboardHuntStrategy(board)
+        board.set_state(2, 1, CellState.HIT)
+
+        commit = strategy.report_recognition_result(
+            (2, 2),
+            hit=True,
+            sunk_direction="H",
+        )
+
+        self.assertEqual(commit.final_state, CellState.SUNK)
+        self.assertEqual(commit.confirmation_source, "visual")
+        self.assertTrue(commit.sunk_validation.valid)
+        self.assertEqual(commit.newly_confirmed[0].cells, ((2, 1), (2, 2)))
+        self.assertEqual(strategy.remaining_submarines, (3,))
+
+    def test_visual_vertical_candidate_confirms_sunk(self) -> None:
+        board = SonarBoard(6, (2, 3))
+        strategy = CheckerboardHuntStrategy(board)
+        board.set_state(1, 3, CellState.HIT)
+
+        commit = strategy.report_recognition_result(
+            (2, 3),
+            hit=True,
+            sunk_direction="V",
+        )
+
+        self.assertEqual(commit.final_state, CellState.SUNK)
+        self.assertEqual(commit.newly_confirmed[0].direction, "V")
+        self.assertEqual(board.get_state(1, 3), CellState.SUNK)
+        self.assertIn((1, 2), strategy.excluded_cells)
+
+    def test_visual_crossing_without_continuous_hits_stays_hit(self) -> None:
+        board = SonarBoard(6, (2, 3))
+        strategy = CheckerboardHuntStrategy(board)
+
+        commit = strategy.report_recognition_result(
+            (2, 2),
+            hit=True,
+            sunk_direction="H",
+        )
+
+        self.assertEqual(commit.final_state, CellState.HIT)
+        self.assertFalse(commit.sunk_validation.valid)
+        self.assertEqual(strategy.get_confirmed_ships(), ())
+
+    def test_visual_candidate_length_missing_from_remaining_stays_hit(self) -> None:
+        board = SonarBoard(6, (3,))
+        strategy = CheckerboardHuntStrategy(board)
+        board.set_state(2, 1, CellState.HIT)
+
+        commit = strategy.report_recognition_result(
+            (2, 2),
+            hit=True,
+            sunk_direction="H",
+        )
+
+        self.assertEqual(commit.final_state, CellState.HIT)
+        self.assertFalse(commit.sunk_validation.valid)
+        self.assertIn("剩余", commit.sunk_validation.reason)
+
+    def test_multiple_visual_ship_explanations_do_not_confirm_early(self) -> None:
+        board = SonarBoard(7, (2, 3, 4))
+        strategy = CheckerboardHuntStrategy(
+            board,
+            use_safety_rule=False,
+        )
+        board.set_state(3, 1, CellState.HIT)
+        board.set_state(3, 3, CellState.HIT)
+
+        commit = strategy.report_recognition_result(
+            (3, 2),
+            hit=True,
+            sunk_direction="H",
+        )
+
+        self.assertEqual(commit.final_state, CellState.HIT)
+        self.assertFalse(commit.sunk_validation.valid)
+        self.assertIn("多个", commit.sunk_validation.reason)
+        self.assertEqual(strategy.get_confirmed_ships(), ())
+
 
 if __name__ == "__main__":
     unittest.main()

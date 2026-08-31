@@ -52,6 +52,10 @@ class RecognitionStateRuleTest(unittest.TestCase):
             is_conclusive_recognition_state("miss")
         )
 
+    def test_sunk_is_hit_and_conclusive(self) -> None:
+        self.assertTrue(is_hit_recognition_state("sunk"))
+        self.assertTrue(is_conclusive_recognition_state("sunk"))
+
     def test_rule_is_case_insensitive(self) -> None:
         self.assertTrue(
             is_hit_recognition_state(" HIT ")
