@@ -11,4 +11,5 @@ runtime/
 .ruff_cache/
 .coverage
 htmlcov/
+outputs/
 !resources/screenshots/.gitkeep

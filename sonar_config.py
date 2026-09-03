@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 Point = tuple[int, int]
 Quad = tuple[Point, Point, Point, Point]
+BOARD_REFERENCE_DIR = Path(__file__).resolve().parent / "resources" / "board_references"
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,7 @@ class SonarLevelConfig:
     board_quad: Quad | None
     hunt_parity: int = 0
     use_safety_rule: bool = True
+    empty_reference_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +116,7 @@ DEFAULT_LEVEL_CONFIG = SonarLevelConfig(
         (666, 625),
         (259, 288),
     ),
+    empty_reference_path=BOARD_REFERENCE_DIR / "level_11_empty.png",
 )
 
 INITIAL_LEVEL = int(os.getenv("SONAR_INITIAL_LEVEL", "10"))
@@ -156,6 +160,7 @@ def get_level_config(level: int) -> SonarLevelConfig:
             grid_size=min(actual_level + 2, 10),
             submarines=_EARLY_LEVEL_SUBMARINES[actual_level],
             board_quad=_EARLY_LEVEL_QUADS[actual_level],
+            empty_reference_path=BOARD_REFERENCE_DIR / f"level_{actual_level:02d}_empty.png",
         )
     return DEFAULT_LEVEL_CONFIG
 
