@@ -36,6 +36,7 @@ _SUNK_OUTLINE = "#f97316"
 _MANUAL_EDIT_OUTLINE = "#a855f7"
 _MANUAL_CONFIRM_OUTLINE = "#7c3aed"
 _MANUAL_CANCEL_OUTLINE = "#dc2626"
+_RECOGNITION_REVIEW_OUTLINE = "#ef4444"
 _CANDIDATE_VALID_OUTLINE = "#16a34a"
 _CANDIDATE_INVALID_OUTLINE = "#ef4444"
 _BOARD_OUTLINE = "#0f172a"
@@ -91,6 +92,7 @@ class SonarBoardView(ttk.Frame):
         self._cell_items: dict[Cell, int] = {}
         self._hover_cell: Cell | None = None
         self._manual_session: ManualEditSession | None = None
+        self._manual_edit_enabled = True
         self._manual_message = None
         self._last_manual_revision = -1
         self._press_cell: Cell | None = None
@@ -146,6 +148,8 @@ class SonarBoardView(ttk.Frame):
         ttk.Label(
             header,
             textvariable=self.hover_var,
+            wraplength=GUI_CONFIG.board_view_width,
+            justify=tk.LEFT,
         ).pack(
             side=tk.RIGHT,
         )
@@ -153,6 +157,8 @@ class SonarBoardView(ttk.Frame):
         ttk.Label(
             self,
             textvariable=self.strategy_var,
+            wraplength=GUI_CONFIG.board_view_width,
+            justify=tk.LEFT,
         ).pack(
             fill=tk.X,
             pady=(0, 6),
@@ -204,6 +210,7 @@ class SonarBoardView(ttk.Frame):
             ("命中", _HIT_FILL, _GRID_OUTLINE, 1),
             ("已确认潜艇", _HIT_FILL, _SUNK_OUTLINE, 3),
             ("人工临时修改", _UNKNOWN_FILL, _MANUAL_EDIT_OUTLINE, 3),
+            ("识别需复核(?)", _UNKNOWN_FILL, _RECOGNITION_REVIEW_OUTLINE, 3),
         )
 
         for text, fill, border, thickness in legend_items:
@@ -336,6 +343,12 @@ class SonarBoardView(ttk.Frame):
         self._last_manual_revision = -1
         self.refresh()
 
+    def set_manual_edit_enabled(self, enabled: bool) -> None:
+        """识别后台运行时冻结 Canvas 人工修改。"""
+        self._manual_edit_enabled = bool(enabled)
+        if not self._manual_edit_enabled:
+            self.clear_manual_interaction()
+
     def set_models(
         self,
         board: SonarBoard,
@@ -395,6 +408,15 @@ class SonarBoardView(ttk.Frame):
             f"潜艇 [{submarine_text}] | "
             f"坐标映射 {board_snapshot.mapped_count}/{total}"
         )
+
+        if self._manual_session is not None:
+            session = self._manual_session
+            self.strategy_var.set(
+                f"人工待应用 | 已确认 {len(session.confirmed_ships)} | "
+                f"需复核 {len(session.review_cells)} 格 | "
+                f"{session.recognition_summary or '可手动修改，应用后重建策略'}"
+            )
+            return
 
         if strategy_snapshot is None:
             self.strategy_var.set(
@@ -475,6 +497,10 @@ class SonarBoardView(ttk.Frame):
     ) -> None:
         self.canvas.delete("all")
         self._cell_items.clear()
+        if self._manual_session is not None:
+            # 待编辑棋盘不叠加旧正式策略的排除区和下一格。
+            strategy_snapshot = None
+        self._hover_cell = None
 
         width = max(
             self.canvas.winfo_width(),
@@ -584,6 +610,10 @@ class SonarBoardView(ttk.Frame):
                         outline = _MANUAL_CONFIRM_OUTLINE
                         outline_width = 4
 
+                    if cell in self._manual_session.review_cells:
+                        outline = _RECOGNITION_REVIEW_OUTLINE
+                        outline_width = 4
+
                 if cell in self._candidate_cells:
                     outline = (
                         _CANDIDATE_VALID_OUTLINE
@@ -611,7 +641,12 @@ class SonarBoardView(ttk.Frame):
                     self.canvas.create_text(
                         center[0],
                         center[1],
-                        text=f"{row + 1},{col + 1}",
+                        text=(
+                            f"{row + 1},{col + 1}?"
+                            if self._manual_session is not None
+                            and cell in self._manual_session.review_cells
+                            else f"{row + 1},{col + 1}"
+                        ),
                         fill="#0f172a",
                         font=("TkDefaultFont", 7),
                         tags=("cell-label",),
@@ -940,7 +975,7 @@ class SonarBoardView(ttk.Frame):
 
     def _on_button_press(self, event: tk.Event) -> None:
         session = self._manual_session
-        if session is None:
+        if session is None or not getattr(self, "_manual_edit_enabled", True):
             return
         cell = self._cell_at(event.x, event.y)
         if cell is None:
@@ -1000,7 +1035,7 @@ class SonarBoardView(ttk.Frame):
         session = self._manual_session
         cell = self._press_cell
         self.canvas.delete("manual-hold-progress")
-        if session is None or cell is None:
+        if session is None or cell is None or not getattr(self, "_manual_edit_enabled", True):
             return
         self._long_press_triggered = True
         try:
@@ -1020,7 +1055,7 @@ class SonarBoardView(ttk.Frame):
             self._emit_manual_message(str(exc))
 
     def _on_button_drag(self, event: tk.Event) -> None:
-        if self._press_cell is None:
+        if self._press_cell is None or not getattr(self, "_manual_edit_enabled", True):
             return
         self._press_position = (event.x, event.y)
         if self._selection_origin is None:
@@ -1070,7 +1105,7 @@ class SonarBoardView(ttk.Frame):
         candidate = self._candidate_cells
         candidate_error = self._candidate_error
         self.clear_manual_interaction()
-        if session is None or cell is None:
+        if session is None or cell is None or not getattr(self, "_manual_edit_enabled", True):
             return
         try:
             if long_pressed:
@@ -1144,7 +1179,13 @@ class SonarBoardView(ttk.Frame):
         strategy_snapshot = self._strategy_snapshot()
 
         point = board_snapshot.screen_points[row][col]
-        state = board_snapshot.states[row][col]
+        if self._manual_session is not None:
+            strategy_snapshot = None
+        state = (
+            self._manual_session.state_at(found)
+            if self._manual_session is not None
+            else board_snapshot.states[row][col]
+        )
 
         if point is None:
             point_text = "模拟器坐标：未绑定"
@@ -1157,10 +1198,21 @@ class SonarBoardView(ttk.Frame):
             strategy_snapshot=strategy_snapshot,
         )
 
+        recognition_text = ""
+        if self._manual_session is not None:
+            confidence = self._manual_session.recognition_confidence_at(found)
+            if confidence is not None:
+                recognition_text = f" | 识别可信度：{confidence:.2f}"
+                if found in self._manual_session.review_cells:
+                    recognition_text += "（需复核）"
+                reason = self._manual_session.recognition_reason_at(found)
+                if reason:
+                    recognition_text += f"\n{reason}"
+
         self.hover_var.set(
             f"逻辑格：({row},{col}) | "
             f"{point_text} | "
-            f"状态：{state_text}"
+            f"状态：{state_text}{recognition_text}"
         )
 
     @staticmethod

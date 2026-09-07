@@ -89,15 +89,15 @@ def detect_sonar_page_state(
     page: PageController,
     *,
     stop_event: Event | None = None,
+    screenshot=None,
 ) -> SonarPageState:
     """只截图检查当前声纳相关页面，不进行点击。"""
     raise_if_stop_requested(
         stop_event
     )
 
-    screenshot = (
-        page.adb.read_screenshot()
-    )
+    if screenshot is None:
+        screenshot = page.adb.read_screenshot()
 
     quit_match = find_template(
         screenshot,

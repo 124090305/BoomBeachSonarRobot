@@ -107,6 +107,44 @@ class GuiConfig:
     board_refresh_ms: int = 120
 
 
+@dataclass(frozen=True)
+class GlobalBoardSyncConfig:
+    """实机多帧全局识别及自动校准的安全门槛。"""
+
+    frame_count: int = 3
+    maximum_frame_count: int = 5  # 有分歧/质量不足时追加；增大提高复核开销
+    frame_interval_seconds: float = 0.18
+    minimum_usable_frames: int = 2
+    cell_agreement_threshold: float = 2 / 3
+    minimum_mean_agreement: float = 0.97
+    maximum_disagreement_cells: int = 3
+    auto_minimum_known_confidence: float = 0.66
+    auto_minimum_unknown_review_confidence: float = 0.58
+    output_dir_name: str = "global_board_sync"
+    save_debug: bool = True
+    feasibility_node_limit: int = 20000  # 自动校准布局审核搜索上限；超限要求人工处理
+
+    def __post_init__(self) -> None:
+        if self.frame_count <= 0 or self.minimum_usable_frames <= 0:
+            raise ValueError("实时识别帧数必须大于 0")
+        if self.minimum_usable_frames > self.frame_count:
+            raise ValueError("最少可用帧数不能超过总帧数")
+        if self.maximum_frame_count < self.frame_count or self.feasibility_node_limit <= 0:
+            raise ValueError("最大帧数不能小于初始帧数，布局审核上限必须为正")
+        if self.maximum_disagreement_cells < 0 or self.cell_agreement_threshold <= 0.5:
+            raise ValueError("分歧格上限不得为负，船段支持比例必须超过一半")
+        if self.frame_interval_seconds < 0:
+            raise ValueError("实时识别帧间隔不能小于 0")
+        for value in (
+            self.cell_agreement_threshold,
+            self.minimum_mean_agreement,
+            self.auto_minimum_known_confidence,
+            self.auto_minimum_unknown_review_confidence,
+        ):
+            if not 0 <= value <= 1:
+                raise ValueError("实时识别比例和置信度必须位于 0~1")
+
+
 DEFAULT_LEVEL_CONFIG = SonarLevelConfig(
     grid_size=10,
     submarines=(2, 2, 3, 4, 5),
@@ -167,6 +205,7 @@ def get_level_config(level: int) -> SonarLevelConfig:
 ACTIVITY_PAGE_CONFIG = ActivityPageConfig()
 AUTO_PROBE_CONFIG = AutoProbeConfig()
 GUI_CONFIG = GuiConfig()
+GLOBAL_BOARD_SYNC_CONFIG = GlobalBoardSyncConfig()
 
 
 __all__ = [
@@ -174,10 +213,12 @@ __all__ = [
     "AUTO_PROBE_CONFIG",
     "DEFAULT_LEVEL_CONFIG",
     "GUI_CONFIG",
+    "GLOBAL_BOARD_SYNC_CONFIG",
     "INITIAL_LEVEL",
     "ActivityPageConfig",
     "AutoProbeConfig",
     "GuiConfig",
+    "GlobalBoardSyncConfig",
     "SonarLevelConfig",
     "get_level_config",
 ]

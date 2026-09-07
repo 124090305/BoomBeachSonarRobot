@@ -17,6 +17,15 @@ from .auto_probe_loop import (
     run_auto_probe_loop,
 )
 from .auto_probe_ready import ensure_auto_probe_ready
+from .board_sync_flow import (
+    BoardSyncApplyResult,
+    BoardSyncError,
+    apply_automatic_board_sync,
+    apply_recognition_preview,
+    recognize_current_board,
+    validate_automatic_board_sync,
+)
+from .board_sync_state import BoardSyncState, ResumeCalibrationDecision
 from .level_loop import (
     LevelState,
     MultiLevelLoopSummary,
@@ -55,17 +64,23 @@ __all__ = [
     "AutoProbeCommittedResult",
     "AutoProbeLoopSummary",
     "AutoProbeOnceResult",
+    "BoardSyncApplyResult",
+    "BoardSyncError",
+    "BoardSyncState",
     "ProbeOutcome",
     "LevelState",
     "ManualProbeResult",
     "MultiLevelLoopSummary",
     "ProbeContext",
     "ProbeRecoveryResult",
+    "ResumeCalibrationDecision",
     "ScreenshotCheckResult",
     "SonarPageState",
     "StopRequestedError",
     "VictoryTransitionError",
     "build_default_hit_config",
+    "apply_automatic_board_sync",
+    "apply_recognition_preview",
     "create_level_state",
     "detect_sonar_page_state",
     "dismiss_activity_start_hint",
@@ -75,6 +90,7 @@ __all__ = [
     "is_hit_recognition_state",
     "recover_after_hit_once",
     "recover_after_miss_once",
+    "recognize_current_board",
     "reenter_activity_for_probe",
     "run_auto_probe_loop",
     "run_multi_level_loop",
@@ -85,5 +101,6 @@ __all__ = [
     "wait_activity_detail_ready",
     "wait_home_island_ready",
     "wait_sonar_ready",
+    "validate_automatic_board_sync",
     "handle_victory_transition",
 ]

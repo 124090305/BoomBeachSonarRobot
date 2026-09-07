@@ -9,6 +9,7 @@ from sonar_config import (
     ACTIVITY_PAGE_CONFIG,
     AUTO_PROBE_CONFIG,
     DEFAULT_LEVEL_CONFIG,
+    GLOBAL_BOARD_SYNC_CONFIG,
     GUI_CONFIG,
 )
 from ui.gui_app import BoomBeachSonarApp
@@ -39,6 +40,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertEqual(AUTO_PROBE_CONFIG.max_restart_attempts, 3)
         self.assertGreater(AUTO_PROBE_CONFIG.hit_online_wait_seconds, 0)
         self.assertGreater(GUI_CONFIG.board_view_width, 0)
+        self.assertEqual(GLOBAL_BOARD_SYNC_CONFIG.frame_count, 3)
         self.assertGreater(config.STOP_POLL_INTERVAL, 0)
 
     def test_stop_signal_is_public(self) -> None:
@@ -51,6 +53,10 @@ class PublicApiTests(unittest.TestCase):
 
     def test_gui_uses_descriptive_class_name(self) -> None:
         self.assertEqual(BoomBeachSonarApp.__name__, "BoomBeachSonarApp")
+
+    def test_global_board_sync_entry_points_are_public(self) -> None:
+        self.assertTrue(callable(flows.recognize_current_board))
+        self.assertTrue(callable(flows.apply_automatic_board_sync))
 
 
 if __name__ == "__main__":

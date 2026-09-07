@@ -9,7 +9,11 @@ from flows import (
     LevelState,
     run_multi_level_loop,
 )
+from flows.board_sync_flow import apply_automatic_board_sync, recognize_current_board
+from flows.board_sync_state import BoardSyncState, ResumeCalibrationDecision
+from flows.level_loop import MultiLevelLoopSummary
 from logger import get_logger
+from stop_control import StopRequestedError, raise_if_stop_requested
 
 from .runtime_context import AppRuntimeContext
 
@@ -31,6 +35,7 @@ class AutoProbeLoopBridge:
         self.stop_event = threading.Event()
         self.events: queue.Queue[AutoLoopEvent] = queue.Queue()
         self.thread: threading.Thread | None = None
+        self.board_sync_state = BoardSyncState()
 
     @property
     def running(self) -> bool:
@@ -47,6 +52,18 @@ class AutoProbeLoopBridge:
             )
 
         self.context = context
+        self.board_sync_state.invalidate()
+
+    def mark_manual_applied(self) -> None:
+        """仅暂停后的成功应用可跳过下一次自动校准。"""
+        self.board_sync_state.mark_manual_applied(self._review_token())
+
+    def _review_token(self):
+        return (id(self.context.board), getattr(self.context.board, "revision", None),
+                self.context.current_level, id(self.context.adb))
+
+    def invalidate_manual_review(self) -> None:
+        self.board_sync_state.invalidate()
 
     def start(self) -> bool:
         """启动后台循环；已经运行时返回 False。"""
@@ -105,6 +122,25 @@ class AutoProbeLoopBridge:
 
         try:
             with context.control_lock:
+                raise_if_stop_requested(self.stop_event)
+                decision = self.board_sync_state.resume_decision(self._review_token())
+                if decision == ResumeCalibrationDecision.AUTO:
+                    self.events.put(("calibrating", context.current_level))
+                    recognition = recognize_current_board(
+                        context.adb, context.page, level=context.current_level,
+                        stop_event=self.stop_event,
+                    )
+                    raise_if_stop_requested(self.stop_event)
+                    sync = apply_automatic_board_sync(
+                        recognition, context.board, context.strategy, stop_event=self.stop_event,
+                    )
+                    self.events.put(("calibration", sync))
+                    self.board_sync_state.mark_resume_succeeded()
+                elif decision == ResumeCalibrationDecision.SKIP_MANUAL:
+                    self.events.put(("calibration_skipped", "manual_applied"))
+                    self.board_sync_state.mark_resume_succeeded()
+
+                raise_if_stop_requested(self.stop_event)
                 summary = run_multi_level_loop(
                     adb=context.adb,
                     page=context.page,
@@ -124,7 +160,21 @@ class AutoProbeLoopBridge:
                 if summary.stop_reason != "requested":
                     context.network.restore_network()
 
+                if summary.stop_reason != "max_levels":
+                    self.board_sync_state.mark_requested_pause()
+
+        except StopRequestedError:
+            self.board_sync_state.mark_requested_pause()
+            current = self.context
+            summary = MultiLevelLoopSummary(
+                rounds=0, hits=0, misses=0, completed_levels=0,
+                current_level=current.current_level, stop_reason="requested",
+                strategy_done=bool(getattr(current.strategy, "done", False)), last_result=None,
+                level_state=LevelState(current.current_level, current.board, current.strategy),
+            )
+            logger.info("启动/恢复校准在安全点停止，未进入探测循环")
         except Exception as exc:
+            self.board_sync_state.mark_requested_pause()
             try:
                 with context.control_lock:
                     context.network.restore_network()

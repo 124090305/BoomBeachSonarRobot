@@ -16,6 +16,10 @@ class ManualEditError(ValueError):
 class _EditState:
     states: tuple[tuple[CellState, ...], ...]
     confirmed_ships: tuple[ConfirmedShip, ...]
+    review_cells: frozenset[Cell]
+    recognition_confidences: tuple[tuple[float | None, ...], ...]
+    recognition_reasons: tuple[tuple[str, ...], ...]
+    recognition_summary: str | None
 
 
 @dataclass(frozen=True)
@@ -60,7 +64,22 @@ class ManualEditSession:
         self.screen_points = snapshot.screen_points
         states = self._normalize_states(snapshot)
         ships = tuple(confirmed_ships) or self._ships_from_sunk_cells(states)
-        self._initial = _EditState(states, ships)
+        empty_confidence = tuple(
+            tuple(None for _col in range(self.grid_size))
+            for _row in range(self.grid_size)
+        )
+        empty_reasons = tuple(
+            tuple("" for _col in range(self.grid_size))
+            for _row in range(self.grid_size)
+        )
+        self._initial = _EditState(
+            states,
+            ships,
+            frozenset(),
+            empty_confidence,
+            empty_reasons,
+            None,
+        )
         self._current = self._initial
         self._undo: list[_EditState] = []
         self._redo: list[_EditState] = []
@@ -87,6 +106,22 @@ class ManualEditSession:
     @property
     def confirmed_ships(self) -> tuple[ConfirmedShip, ...]:
         return self._current.confirmed_ships
+
+    @property
+    def review_cells(self) -> frozenset[Cell]:
+        return self._current.review_cells
+
+    @property
+    def recognition_summary(self) -> str | None:
+        return self._current.recognition_summary
+
+    def recognition_confidence_at(self, cell: Cell) -> float | None:
+        row, col = self._validate_cell(cell)
+        return self._current.recognition_confidences[row][col]
+
+    def recognition_reason_at(self, cell: Cell) -> str:
+        row, col = self._validate_cell(cell)
+        return self._current.recognition_reasons[row][col]
 
     @property
     def can_undo(self) -> bool:
@@ -140,9 +175,13 @@ class ManualEditSession:
             CellState.HIT: CellState.MISS,
             CellState.MISS: CellState.UNKNOWN,
         }[current]
+        review, confidences, reasons = self._without_recognition_review((cell,))
         self._commit(
             self._replace_cells(self.states, (cell,), next_state),
             self.confirmed_ships,
+            review_cells=review,
+            recognition_confidences=confidences,
+            recognition_reasons=reasons,
         )
         return next_state
 
@@ -167,9 +206,13 @@ class ManualEditSession:
             cells=ordered,
             safety_area=frozenset(),
         )
+        review, confidences, reasons = self._without_recognition_review(ordered)
         self._commit(
             self._replace_cells(self.states, ordered, CellState.SUNK),
             self.confirmed_ships + (ship,),
+            review_cells=review,
+            recognition_confidences=confidences,
+            recognition_reasons=reasons,
         )
         return ship
 
@@ -181,9 +224,13 @@ class ManualEditSession:
         )
         if ship is None:
             raise ManualEditError("该 SUNK 格没有对应的完整潜艇记录")
+        review, confidences, reasons = self._without_recognition_review(ship.cells)
         self._commit(
             self._replace_cells(self.states, ship.cells, CellState.HIT),
             tuple(item for item in self.confirmed_ships if item != ship),
+            review_cells=review,
+            recognition_confidences=confidences,
+            recognition_reasons=reasons,
         )
         return ship
 
@@ -208,6 +255,59 @@ class ManualEditSession:
         self._undo.clear()
         self._redo.clear()
         self._revision += 1
+
+    def apply_recognition_preview(
+        self,
+        states: Iterable[Iterable[CellState]],
+        confirmed_ships: Iterable[ConfirmedShip],
+        *,
+        review_cells: Iterable[Cell] = (),
+        confidences: Iterable[Iterable[float | None]] | None = None,
+        reasons: Iterable[Iterable[str]] | None = None,
+        summary: str | None = None,
+    ) -> None:
+        """把一次整盘识别作为一条独立人工历史写入临时缓存。"""
+        normalized_states = tuple(
+            tuple(CellState(value) for value in row)
+            for row in states
+        )
+        if len(normalized_states) != self.grid_size or any(
+            len(row) != self.grid_size for row in normalized_states
+        ):
+            raise ManualEditError("识别棋盘尺寸与人工编辑棋盘不一致")
+        if any(state == CellState.SELECTED for row in normalized_states for state in row):
+            raise ManualEditError("全局识别结果不能包含 SELECTED")
+        normalized_ships = tuple(confirmed_ships)
+        normalized_review = frozenset(self._validate_cell(cell) for cell in review_cells)
+        if confidences is None:
+            normalized_confidences = tuple(
+                tuple(None for _col in range(self.grid_size))
+                for _row in range(self.grid_size)
+            )
+        else:
+            normalized_confidences = tuple(tuple(value for value in row) for row in confidences)
+        if reasons is None:
+            normalized_reasons = tuple(
+                tuple("" for _col in range(self.grid_size))
+                for _row in range(self.grid_size)
+            )
+        else:
+            normalized_reasons = tuple(tuple(str(value) for value in row) for row in reasons)
+        for matrix, name in (
+            (normalized_confidences, "置信度"),
+            (normalized_reasons, "原因"),
+        ):
+            if len(matrix) != self.grid_size or any(len(row) != self.grid_size for row in matrix):
+                raise ManualEditError(f"识别{name}矩阵尺寸不一致")
+        next_state = _EditState(
+            normalized_states,
+            normalized_ships,
+            normalized_review,
+            normalized_confidences,
+            normalized_reasons,
+            str(summary) if summary else None,
+        )
+        self._commit_state(next_state, force=True)
 
     def validate_for_apply(self, *, use_safety_rule: bool) -> None:
         """在写入正式状态前校验当前完整人工结果。"""
@@ -270,14 +370,42 @@ class ManualEditSession:
                         f"{sorted(hit_conflicts)}"
                     )
 
-    def _commit(self, states, ships: tuple[ConfirmedShip, ...]) -> None:
-        next_state = _EditState(states, ships)
-        if next_state == self._current:
+    def _commit(
+        self,
+        states,
+        ships: tuple[ConfirmedShip, ...],
+        *,
+        review_cells=None,
+        recognition_confidences=None,
+        recognition_reasons=None,
+    ) -> None:
+        next_state = _EditState(
+            states,
+            ships,
+            self.review_cells if review_cells is None else frozenset(review_cells),
+            self._current.recognition_confidences if recognition_confidences is None else recognition_confidences,
+            self._current.recognition_reasons if recognition_reasons is None else recognition_reasons,
+            self.recognition_summary,
+        )
+        self._commit_state(next_state)
+
+    def _commit_state(self, next_state: _EditState, *, force: bool = False) -> None:
+        if next_state == self._current and not force:
             return
         self._undo.append(self._current)
         self._current = next_state
         self._redo.clear()
         self._revision += 1
+
+    def _without_recognition_review(self, cells: Iterable[Cell]):
+        targets = {self._validate_cell(cell) for cell in cells}
+        review = self.review_cells.difference(targets)
+        confidences = [list(row) for row in self._current.recognition_confidences]
+        reasons = [list(row) for row in self._current.recognition_reasons]
+        for row, col in targets:
+            confidences[row][col] = None
+            reasons[row][col] = ""
+        return review, tuple(tuple(row) for row in confidences), tuple(tuple(row) for row in reasons)
 
     @staticmethod
     def _replace_cells(states, cells: Iterable[Cell], state: CellState):

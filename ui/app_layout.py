@@ -208,6 +208,7 @@ class AppActions:
     redo_manual_edit: Action
     discard_manual_changes: Action
     apply_manual_changes: Action
+    recognize_manual_board: Action
     reset_sonar_board: Action
     change_level: LevelAction
 
@@ -220,6 +221,7 @@ class AppLayout:
     restart_game_button: tk.Button
     weak_network_button: tk.Button
     reject_network_button: tk.Button
+    restore_network_button: ttk.Button
     auto_loop_button: tk.Button
     manual_intervention_button: tk.Button
     reset_board_button: ttk.Button
@@ -227,6 +229,8 @@ class AppLayout:
     manual_undo_button: ttk.Button
     manual_redo_button: ttk.Button
     manual_apply_button: ttk.Button
+    manual_discard_button: ttk.Button
+    manual_recognize_button: tk.Button
     log_text: tk.Text
     board_view: SonarBoardView
     level_selector: LevelSelector
@@ -374,11 +378,12 @@ def build_app_layout(
         padx=4,
     )
 
-    ttk.Button(
+    restore_network_button = ttk.Button(
         network_row,
         text="恢复网络",
         command=actions.restore_network,
-    ).pack(
+    )
+    restore_network_button.pack(
         side=tk.LEFT,
         padx=4,
     )
@@ -556,11 +561,18 @@ def build_app_layout(
         command=actions.redo_manual_edit,
     )
     manual_redo_button.pack(side=tk.LEFT, padx=(0, 6))
-    ttk.Button(
+    manual_recognize_button = tk.Button(
+        manual_edit_toolbar,
+        text="识别当前棋盘",
+        command=actions.recognize_manual_board,
+    )
+    manual_recognize_button.pack(side=tk.LEFT, padx=(0, 6))
+    manual_discard_button = ttk.Button(
         manual_edit_toolbar,
         text="取消修改",
         command=actions.discard_manual_changes,
-    ).pack(side=tk.LEFT, padx=(0, 6))
+    )
+    manual_discard_button.pack(side=tk.LEFT, padx=(0, 6))
     manual_apply_button = ttk.Button(
         manual_edit_toolbar,
         text="应用修改",
@@ -601,6 +613,7 @@ def build_app_layout(
         restart_game_button=restart_game_button,
         weak_network_button=weak_network_button,
         reject_network_button=reject_network_button,
+        restore_network_button=restore_network_button,
         auto_loop_button=auto_loop_button,
         manual_intervention_button=manual_intervention_button,
         reset_board_button=reset_board_button,
@@ -608,6 +621,8 @@ def build_app_layout(
         manual_undo_button=manual_undo_button,
         manual_redo_button=manual_redo_button,
         manual_apply_button=manual_apply_button,
+        manual_discard_button=manual_discard_button,
+        manual_recognize_button=manual_recognize_button,
         log_text=log_text,
         board_view=board_view,
         level_selector=level_selector,

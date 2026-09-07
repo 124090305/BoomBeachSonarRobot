@@ -4,6 +4,7 @@ import unittest
 
 from sonar import (
     CellState,
+    ConfirmedShip,
     ManualEditError,
     ManualEditSession,
     SonarBoard,
@@ -128,6 +129,32 @@ class ManualEditSessionTests(unittest.TestCase):
         self.assertFalse(session.changed_cells)
         self.assertFalse(session.can_undo)
         self.assertFalse(session.can_redo)
+
+    def test_recognition_preview_is_one_undoable_operation(self) -> None:
+        session = ManualEditSession(self.make_board())
+        session.cycle_cell((3, 3))
+        before = session.states
+        states = [[CellState.UNKNOWN for _ in range(4)] for _ in range(4)]
+        states[1][1] = states[1][2] = CellState.SUNK
+        ship = ConfirmedShip(2, "H", ((1, 1), (1, 2)), frozenset())
+
+        session.apply_recognition_preview(
+            states,
+            (ship,),
+            review_cells=((0, 0),),
+            confidences=[[0.5 for _ in range(4)] for _ in range(4)],
+            reasons=[["识别" for _ in range(4)] for _ in range(4)],
+            summary="一次整盘识别",
+        )
+
+        self.assertEqual(session.state_at((1, 1)), CellState.SUNK)
+        self.assertEqual(session.review_cells, frozenset({(0, 0)}))
+        self.assertTrue(session.undo())
+        self.assertEqual(session.states, before)
+        self.assertTrue(session.redo())
+        self.assertEqual(session.state_at((1, 2)), CellState.SUNK)
+        session.cycle_cell((0, 0))
+        self.assertNotIn((0, 0), session.review_cells)
 
 
 if __name__ == "__main__":

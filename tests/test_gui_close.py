@@ -14,6 +14,7 @@ class GuiCloseTests(unittest.TestCase):
     def test_close_waits_for_cleanup_and_only_main_thread_schedules_tk(self) -> None:
         app = object.__new__(BoomBeachSonarApp)
         app._closing = False
+        app._manual_recognition_stop = threading.Event()
         app._close_results = queue.Queue()
         app.status_var = SimpleNamespace(set=Mock())
         app._write_log = Mock()
@@ -45,6 +46,7 @@ class GuiCloseTests(unittest.TestCase):
 
         with patch("ui.gui_app.detach_log_handler") as detach:
             app.on_close()
+            self.assertTrue(app._manual_recognition_stop.is_set())
             request_stop.assert_called_once_with()
             app.board_view.shutdown.assert_called_once_with()
             app.destroy.assert_not_called()

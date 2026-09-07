@@ -10,7 +10,7 @@ from typing import Callable
 
 import config
 
-from flows import run_screenshot_check
+from flows import apply_recognition_preview, recognize_current_board, run_screenshot_check
 from logger import (
     GuiLogFormatter,
     attach_log_handler,
@@ -178,6 +178,7 @@ class BoomBeachSonarApp(tk.Tk):
             redo_manual_edit=self.redo_manual_edit,
             discard_manual_changes=self.discard_manual_changes,
             apply_manual_changes=self.apply_manual_changes,
+            recognize_manual_board=self.recognize_manual_board,
             reset_sonar_board=self.reset_sonar_board,
             change_level=self.change_level,
         )
@@ -257,10 +258,24 @@ class BoomBeachSonarApp(tk.Tk):
         )
         self._apply_device_button = layout.apply_device_button
         self._reset_board_button = layout.reset_board_button
+        self._restore_network_button = layout.restore_network_button
         self._manual_edit_toolbar = layout.manual_edit_toolbar
         self._manual_undo_button = layout.manual_undo_button
         self._manual_redo_button = layout.manual_redo_button
         self._manual_apply_button = layout.manual_apply_button
+        self._manual_discard_button = layout.manual_discard_button
+        self._manual_recognize_button = StatefulButton(
+            layout.manual_recognize_button,
+            ButtonLabels(
+                ready="识别当前棋盘",
+                active="识别当前棋盘",
+                busy_on="正在识别…",
+                busy_off="正在识别…",
+                locked="识别不可用",
+                error="识别失败，点击重试",
+            ),
+            is_toggle=False,
+        )
         self.log_text = layout.log_text
         self.board_view = layout.board_view
         self.level_selector = layout.level_selector
@@ -283,6 +298,8 @@ class BoomBeachSonarApp(tk.Tk):
 
     def _level_change_allowed(self) -> bool:
         """关卡切换只允许发生在完全空闲的运行上下文上。"""
+        if self._context_busy():
+            return False
         attributes = self.__dict__
         if attributes.get("_closing", False):
             return False
@@ -359,6 +376,8 @@ class BoomBeachSonarApp(tk.Tk):
 
     def apply_device(self) -> None:
         """切换 ADB 设备，保留当前棋盘和策略状态。"""
+        if self._context_busy():
+            return
         if self._manual_session is not None:
             messagebox.showwarning(
                 "人工干预中",
@@ -440,6 +459,7 @@ class BoomBeachSonarApp(tk.Tk):
 
         if self._restart_button.begin() is None:
             return
+        self._invalidate_manual_review()
 
         def task() -> str:
             self.game.restart_game()
@@ -516,6 +536,8 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def restore_network(self) -> None:
+        if self._manual_recognition_running():
+            return
         if not self._manual_control_available():
             return
 
@@ -547,6 +569,8 @@ class BoomBeachSonarApp(tk.Tk):
     # =========================================================
 
     def reset_sonar_board(self) -> None:
+        if self._context_busy():
+            return
         if self._manual_session is not None:
             messagebox.showwarning(
                 "人工干预中",
@@ -561,6 +585,7 @@ class BoomBeachSonarApp(tk.Tk):
             return
 
         self.sonar_strategy.reset()
+        self._invalidate_manual_review()
         next_cell = self.sonar_strategy.choose_next_cell()
         self._write_log(
             "声纳棋盘和策略状态已重置；"
@@ -573,6 +598,8 @@ class BoomBeachSonarApp(tk.Tk):
         col: int,
     ) -> None:
         """手动调试时直接高亮一个格子。"""
+        if self._manual_recognition_running() or self._context_busy() or self._auto_loop_running():
+            return
         self.sonar_board.select_cell(
             row,
             col,
@@ -585,6 +612,9 @@ class BoomBeachSonarApp(tk.Tk):
         hit: bool,
     ) -> None:
         """写入调试结果；当前策略格会同步推进策略。"""
+        if self._manual_recognition_running() or self._context_busy() or self._auto_loop_running():
+            return
+        self._invalidate_manual_review()
         cell = (
             int(row),
             int(col),
@@ -611,6 +641,9 @@ class BoomBeachSonarApp(tk.Tk):
         hit: bool,
     ) -> None:
         """写入正式策略结果并准备下一格。"""
+        if self._manual_recognition_running() or self._context_busy() or self._auto_loop_running():
+            return
+        self._invalidate_manual_review()
         cell = (
             int(row),
             int(col),
@@ -642,6 +675,9 @@ class BoomBeachSonarApp(tk.Tk):
         cells: list[tuple[int, int]],
     ) -> None:
         """手动调试入口：标记一组已确认潜艇格。"""
+        if self._manual_recognition_running() or self._context_busy() or self._auto_loop_running():
+            return
+        self._invalidate_manual_review()
         self.sonar_board.mark_sunk(
             cells
         )
@@ -657,6 +693,8 @@ class BoomBeachSonarApp(tk.Tk):
         self._enter_manual_intervention()
 
     def _enter_manual_intervention(self) -> None:
+        if self._context_busy() or self._manual_session is not None:
+            return
         if self._auto_loop_running():
             self._manual_intervention_button.set_locked(True)
             return
@@ -683,6 +721,8 @@ class BoomBeachSonarApp(tk.Tk):
         self._write_log("已进入基础人工干预模式；未操作模拟器和网络")
 
     def _exit_manual_intervention(self) -> None:
+        if self._manual_recognition_running():
+            return
         if self._manual_intervention_button.begin() is None:
             return
         self.board_view.clear_manual_interaction()
@@ -710,6 +750,10 @@ class BoomBeachSonarApp(tk.Tk):
         session = self._manual_session
         if session is None:
             return
+        if self._manual_recognition_running():
+            self._manual_undo_button.state(["disabled"])
+            self._manual_redo_button.state(["disabled"])
+            return
         self._manual_undo_button.state(
             ["!disabled"] if session.can_undo else ["disabled"]
         )
@@ -718,6 +762,8 @@ class BoomBeachSonarApp(tk.Tk):
         )
 
     def undo_manual_edit(self) -> None:
+        if self._manual_recognition_running():
+            return
         session = self._manual_session
         if session is None or not session.undo():
             return
@@ -726,6 +772,8 @@ class BoomBeachSonarApp(tk.Tk):
         self._show_manual_edit_message("已撤回最近一次人工操作")
 
     def redo_manual_edit(self) -> None:
+        if self._manual_recognition_running():
+            return
         session = self._manual_session
         if session is None or not session.redo():
             return
@@ -734,6 +782,8 @@ class BoomBeachSonarApp(tk.Tk):
         self._show_manual_edit_message("已重做最近一次人工操作")
 
     def discard_manual_changes(self) -> None:
+        if self._manual_recognition_running():
+            return
         session = self._manual_session
         if session is None:
             return
@@ -744,6 +794,8 @@ class BoomBeachSonarApp(tk.Tk):
 
     def apply_manual_changes(self) -> None:
         """只提交棋盘事实并重建策略，保留人工模式和停止状态。"""
+        if self._manual_recognition_running() or self._context_busy():
+            return
         session = self._manual_session
         if session is None:
             return
@@ -754,14 +806,16 @@ class BoomBeachSonarApp(tk.Tk):
             )
             return
 
+        if session.review_cells and not messagebox.askyesno(
+            "确认人工审核", f"还有 {len(session.review_cells)} 个识别复核标记。\n"
+            "请确认已逐项核对当前棋盘；应用后将用于正式策略。是否确认应用？",
+        ):
+            return
         self.board_view.clear_manual_interaction()
         self._manual_apply_button.state(["disabled"])
         try:
-            result = apply_manual_edits(
-                session,
-                self.sonar_board,
-                self.sonar_strategy,
-            )
+            with self._runtime.control_lock:
+                result = apply_manual_edits(session, self.sonar_board, self.sonar_strategy)
         except ManualEditError as exc:
             self.status_var.set(f"人工修改校验失败：{exc}")
             self._write_log(f"人工修改校验失败：{exc}")
@@ -785,6 +839,9 @@ class BoomBeachSonarApp(tk.Tk):
             on_message=self._show_manual_edit_message,
         )
         self._refresh_manual_history_buttons()
+        marker = getattr(self._auto_loop_bridge, "mark_manual_applied", None)
+        if marker is not None:
+            marker()
         self.status_var.set(
             f"人工修改已应用；下一目标格={result.next_cell}；自动循环保持停止"
         )
@@ -796,6 +853,128 @@ class BoomBeachSonarApp(tk.Tk):
             f"下一格={result.next_cell}；未操作模拟器和网络"
         )
 
+    def _manual_recognition_running(self) -> bool:
+        button = self.__dict__.get("_manual_recognize_button")
+        return button is not None and button.state == ButtonState.BUSY
+
+    def _context_busy(self) -> bool:
+        return bool(self.__dict__.get("_closing", False)
+                    or self.__dict__.get("_context_operation_count", 0)
+                    or self.__dict__.get("_pending_auto_loop_terminal")
+                    or getattr(self.__dict__.get("_auto_loop_bridge"), "thread", None) is not None)
+
+    def _invalidate_manual_review(self) -> None:
+        invalidate = getattr(self._auto_loop_bridge, "invalidate_manual_review", None)
+        if invalidate is not None:
+            invalidate()
+
+    def recognize_manual_board(self) -> None:
+        """后台识别实机整盘；完成后只替换当前人工缓存。"""
+        session = self._manual_session
+        if session is None or self._auto_loop_running() or self._context_busy():
+            return
+        if self._manual_recognize_button.begin() is None:
+            return
+        expected_revision = session.revision
+        context = self._runtime
+        self._manual_recognition_stop = threading.Event()
+        stop_event = self._manual_recognition_stop
+        self._begin_context_operation()
+        self._set_recognition_controls_locked(True)
+        self.status_var.set("正在识别当前棋盘，请保持游戏页面稳定...")
+        self._write_log("人工全局识别开始：连续采集实机画面并检查多帧一致性")
+
+        def worker() -> None:
+            try:
+                with context.control_lock:
+                    recognition = recognize_current_board(
+                        context.adb,
+                        context.page,
+                        level=context.current_level,
+                        stop_event=stop_event,
+                    )
+            except Exception as exc:
+                self._queue_ui_callback(
+                    lambda error=exc: self._finish_manual_recognition_failure(error)
+                )
+                return
+            self._queue_ui_callback(
+                lambda value=recognition: self._finish_manual_recognition_success(
+                    session,
+                    expected_revision,
+                    value,
+                )
+            )
+
+        try:
+            threading.Thread(target=worker, name="manual-board-recognition", daemon=True).start()
+        except Exception as exc:
+            self._finish_manual_recognition_failure(exc)
+
+    def _finish_manual_recognition_success(
+        self,
+        session: ManualEditSession,
+        expected_revision: int,
+        recognition,
+    ) -> None:
+        if self.__dict__.get("_closing", False):
+            return
+        try:
+            if self._manual_session is not session:
+                raise RuntimeError("人工编辑会话已经变化，已丢弃识别结果")
+            apply_recognition_preview(
+                session,
+                recognition,
+                expected_revision=expected_revision,
+            )
+        except Exception as exc:
+            self._finish_manual_recognition_failure(exc)
+            return
+        self._finish_manual_recognition_controls()
+        self.board_view.clear_manual_interaction()
+        self.board_view.refresh()
+        result = recognition.board_result
+        self.status_var.set(
+            f"整盘识别已进入待应用修改；需复核 {len(result.review_cells)} 格"
+        )
+        self._write_log(
+            "人工全局识别完成："
+            f"counts={result.counts}，quality={result.quality_score:.3f}，"
+            f"agreement={recognition.mean_state_agreement:.3f}，"
+            f"review={[(r + 1, c + 1) for r, c in result.review_cells]}，"
+            f"issues={result.issues}，debug={result.debug_paths}"
+        )
+        if result.review_cells:
+            messagebox.showwarning(
+                "识别结果需要复核",
+                f"识别结果已填入人工棋盘。红框和问号标记了 {len(result.review_cells)} 个低可信格，"
+                "请检查并修正后再应用。",
+            )
+
+    def _finish_manual_recognition_failure(self, error: Exception) -> None:
+        if self.__dict__.get("_closing", False):
+            return
+        self._finish_manual_recognition_controls()
+        self.status_var.set("棋盘识别失败，人工修改保持不变")
+        self._write_log(f"人工全局识别失败，未改变人工缓存和正式棋盘：{error}")
+        messagebox.showerror("无法识别当前棋盘", str(error))
+
+    def _finish_manual_recognition_controls(self) -> None:
+        self._end_context_operation()
+        self._manual_recognize_button.complete_action()
+        self._set_recognition_controls_locked(False)
+        self._refresh_manual_history_buttons()
+
+    def _set_recognition_controls_locked(self, locked: bool) -> None:
+        self.board_view.set_manual_edit_enabled(not locked)
+        self._refresh_manual_button_locks()
+        state = ["disabled"] if locked else ["!disabled"]
+        self._manual_undo_button.state(state)
+        self._manual_redo_button.state(state)
+        self._manual_discard_button.state(state)
+        self._manual_apply_button.state(state)
+        self._restore_network_button.state(state)
+
     # =========================================================
     # 自动连续循环
     # =========================================================
@@ -805,6 +984,8 @@ class BoomBeachSonarApp(tk.Tk):
 
     def _manual_control_available(self) -> bool:
         """后台真正退出后才允许人工网络和重启操作。"""
+        if self._manual_recognition_running() or self._context_busy():
+            return False
         if not self._auto_loop_running():
             return True
 
@@ -816,14 +997,16 @@ class BoomBeachSonarApp(tk.Tk):
 
     def _refresh_manual_button_locks(self) -> None:
         """沿用既有互斥边界：循环线程存活期间人工控制保持锁定。"""
-        locked = self._auto_loop_running()
-        self._restart_button.set_locked(locked)
-        self._weak_network_button.set_locked(locked)
-        self._reject_network_button.set_locked(locked)
-        self._manual_intervention_button.set_locked(locked)
+        locked = self._auto_loop_running() or self._manual_recognition_running()
+        for button in (self._restart_button, self._weak_network_button,
+                       self._reject_network_button, self._manual_intervention_button):
+            if button.state not in (ButtonState.BUSY, ButtonState.ERROR):
+                button.set_locked(locked)
         self._refresh_level_selector_lock()
 
     def start_auto_loop(self) -> None:
+        if self._context_busy():
+            return
         if self._manual_session is not None:
             messagebox.showwarning(
                 "人工干预中",
@@ -848,7 +1031,12 @@ class BoomBeachSonarApp(tk.Tk):
         self._write_log(
             "自动循环启动：停止请求会在最近的安全可中断点生效。"
         )
-        if not self._auto_loop_bridge.start():
+        try:
+            started = self._auto_loop_bridge.start()
+        except Exception as exc:
+            self._show_error(exc)
+            started = False
+        if not started:
             self._auto_loop_button.complete_toggle(False)
             self._manual_intervention_button.set_locked(False)
             self._refresh_level_selector_lock()
@@ -958,6 +1146,30 @@ class BoomBeachSonarApp(tk.Tk):
                 )
                 continue
 
+            if kind == "calibration":
+                sync = payload
+                result = sync.recognition.board_result
+                self.board_view.refresh()
+                self.auto_loop_state_var.set("校准完成，运行中")
+                self.status_var.set("全局棋盘校准完成，自动循环继续")
+                self._write_log(
+                    "恢复循环前全局校准完成："
+                    f"counts={result.counts}，quality={result.quality_score:.3f}，"
+                    f"next={sync.applied.next_cell}"
+                )
+                continue
+
+            if kind == "calibrating":
+                self.auto_loop_state_var.set("恢复校准中")
+                self.status_var.set("正在校准实机棋盘；审核通过前不会探测")
+                continue
+
+            if kind == "calibration_skipped":
+                self.auto_loop_state_var.set("人工校准已采用，运行中")
+                self.status_var.set("已采用本次暂停期间的人工应用结果")
+                self._write_log("恢复循环跳过全局识别：暂停后已成功应用人工修改")
+                continue
+
             if kind == "summary":
                 self._pending_auto_loop_terminal = (kind, payload)
                 break
@@ -1051,6 +1263,9 @@ class BoomBeachSonarApp(tk.Tk):
             return
 
         self._closing = True
+        recognition_stop = self.__dict__.get("_manual_recognition_stop")
+        if recognition_stop is not None:
+            recognition_stop.set()
         self._auto_loop_bridge.request_stop()
         self._cancel_regular_after_callbacks()
         scroll_container = self.__dict__.get(
@@ -1314,6 +1529,8 @@ class BoomBeachSonarApp(tk.Tk):
 
     def _refresh_network_buttons_async(self) -> None:
         """启动及自动流程结束后，读取设备规则而不从本地点击记录推断。"""
+        if self._manual_recognition_running() or self.__dict__.get("_closing", False):
+            return
         self._weak_network_button.set_busy_message("正在读取弱网状态…")
         self._reject_network_button.set_busy_message("正在读取断网状态…")
         self._begin_context_operation()
@@ -1356,6 +1573,8 @@ class BoomBeachSonarApp(tk.Tk):
         running_text: str,
         task: Callable[[], str],
     ) -> None:
+        if self._manual_recognition_running() or self.__dict__.get("_closing", False):
+            return
         self.status_var.set(
             running_text
         )
