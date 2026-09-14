@@ -41,7 +41,8 @@ def recognize_board_files(image_path: str | Path, *, level: int = 11,
 def recognize_board(empty_reference: np.ndarray, current_screenshot: np.ndarray, *,
                     level_config: SonarLevelConfig,
                     config: BoardRecognitionConfig | None = None,
-                    output_dir: str | Path | None = None) -> BoardRecognitionResult:
+                    output_dir: str | Path | None = None,
+                    runtime_geometry: bool = False) -> BoardRecognitionResult:
     cfg = config or BoardRecognitionConfig()
     for name, image in (("empty_reference", empty_reference), ("current_screenshot", current_screenshot)):
         if not isinstance(image, np.ndarray) or image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
@@ -57,7 +58,15 @@ def recognize_board(empty_reference: np.ndarray, current_screenshot: np.ndarray,
     n = level_config.grid_size
     reference = empty_reference
     current = current_screenshot
-    aligned, valid_pixels, alignment = align_board(reference, current, level_config, cfg)
+    if runtime_geometry:
+        from .board_geometry import locate_board, save_geometry_debug
+        geometry = locate_board(reference, current, level_config)
+        aligned = geometry.normalize(current)
+        valid_pixels = cv2.warpPerspective(np.full(current.shape[:2], 255, np.uint8),
+            np.asarray(geometry.current_to_reference), current.shape[1::-1])
+        alignment = geometry.alignment
+    else:
+        aligned, valid_pixels, alignment = align_board(reference, current, level_config, cfg)
     rect_ref, matrix, padding = rectify(reference, level_config, cfg)
     rect_current, _, _ = rectify(aligned, level_config, cfg)
     valid_rect = cv2.warpPerspective(valid_pixels, matrix, rect_current.shape[1::-1])
@@ -117,6 +126,8 @@ def recognize_board(empty_reference: np.ndarray, current_screenshot: np.ndarray,
                              features["difference"], features["ship"],
                              np.maximum(static_rect, current_rect), matrix, padding)
         result = replace(result, debug_paths=save_board_debug(result, images, cfg, output_dir))
+        if runtime_geometry:
+            save_geometry_debug(geometry, current, level_config, Path(output_dir) / "geometry")
     return result
 
 

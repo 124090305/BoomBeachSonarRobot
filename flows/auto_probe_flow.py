@@ -32,6 +32,7 @@ from vision import (
     classify_diamond_hit_multiframe,
     needs_multiframe_confirmation,
 )
+from vision.board_geometry import BoardGeometryError
 
 from .auto_probe_ready import ensure_auto_probe_ready
 from .auto_probe_recovery import (
@@ -174,9 +175,14 @@ def _replay_recognized_hit(
     context: ProbeContext,
     *,
     stop_event: Event | None = None,
+    adb=None,
+    board=None,
 ) -> None:
     """重启回档后重新点击已识别的 HIT，等待后续联网提交。"""
     x, y = context.screen_point
+    if context.runtime_locator is not None:
+        _, _, (x, y) = context.runtime_locator.prepare_target(
+            adb, page, board, context.cell, stop_event=stop_event)
 
     logger.warning(
         "重新点击已识别 HIT：cell=%s，模拟器坐标=(%s, %s)",
@@ -204,6 +210,7 @@ def _complete_recognition_and_sync(
     hit_config: DiamondHitConfig | None,
     recognition_index: int,
     on_result_committed: ResultCommittedCallback | None,
+    page: PageController | None = None,
 ) -> None:
     """完整完成识别、策略写入和棋盘同步，中间不检查停止。"""
     if actual_progress.recognition is None:
@@ -213,6 +220,12 @@ def _complete_recognition_and_sync(
         after = adb.read_image(
             context.after_path
         )
+        if context.runtime_locator is not None and (context.before_geometry is None or context.after_geometry is None):
+            raise BoardGeometryError("本发截图缺少对应定位结果，禁止使用旧坐标识别")
+        if context.before_geometry is not None:
+            before = context.before_geometry.normalize(before)
+            after = context.after_geometry.normalize(after)
+        recognition_center = context.recognition_center or context.screen_point
 
         classifier_config = (
             hit_config
@@ -223,7 +236,7 @@ def _complete_recognition_and_sync(
         actual_progress.recognition = classify_diamond_hit(
             before_screenshot=before,
             after_screenshot=after,
-            center=context.screen_point,
+            center=recognition_center,
             config=classifier_config,
             index=int(recognition_index),
         )
@@ -249,11 +262,15 @@ def _complete_recognition_and_sync(
                 actual_progress.recognition.score,
             )
             second_after = second_frame_reader()
+            if context.runtime_locator is not None:
+                geometry = context.runtime_locator.locate(second_after, page)
+                geometry.require_visible_target(second_after, context.runtime_locator.level, context.cell)
+                second_after = geometry.normalize(second_after)
             actual_progress.recognition = (
                 classify_diamond_hit_multiframe(
                     before_screenshot=before,
                     after_screenshots=[after, second_after],
-                    center=context.screen_point,
+                    center=recognition_center,
                     config=classifier_config,
                     index=int(recognition_index),
                 )
@@ -532,6 +549,8 @@ def run_auto_probe_once(
             page=page,
             context=context,
             stop_event=stop_event,
+            adb=adb,
+            board=board,
         )
         actual_progress.hit_replay_required = False
 
@@ -547,6 +566,7 @@ def run_auto_probe_once(
         hit_config=hit_config,
         recognition_index=recognition_index,
         on_result_committed=on_result_committed,
+        page=page,
     )
 
     raise_if_stop_requested(

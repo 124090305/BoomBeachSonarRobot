@@ -15,6 +15,7 @@ from vision import DiamondHitConfig
 from .auto_probe_flow import AutoProbeOnceResult
 from .auto_probe_loop import AutoProbeLoopSummary, run_auto_probe_loop
 from .victory_flow import handle_victory_transition
+from .board_geometry_flow import RuntimeBoardLocator
 
 
 logger = get_logger(__name__)
@@ -49,6 +50,7 @@ def create_level_state(level: int) -> LevelState:
     board = SonarBoard(level_config.grid_size, level_config.submarines)
     if level_config.board_quad is not None:
         board.set_screen_quad(level_config.board_quad)
+        board.runtime_locator = RuntimeBoardLocator(level_config)
     strategy = CheckerboardHuntStrategy(
         board,
         hunt_parity=level_config.hunt_parity,

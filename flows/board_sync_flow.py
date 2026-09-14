@@ -63,6 +63,7 @@ def recognize_current_board(
         empty_reference=reference,
         stop_event=stop_event,
         output_dir=output,
+        runtime_geometry=True,
     )
     raise_if_stop_requested(stop_event)
     final_page = detect_sonar_page_state(page, stop_event=stop_event)

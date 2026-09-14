@@ -74,6 +74,8 @@ class SonarBoard:
 
         self.grid_size = int(grid_size)
         self.submarines = submarine_tuple
+        # 正式关卡工厂装配定位器；纯逻辑/离线棋盘不连接设备。
+        self.runtime_locator = None
 
         self._lock = RLock()
         self._revision = 0

@@ -21,6 +21,8 @@ from sonar_config import ACTIVITY_PAGE_CONFIG
 from stop_control import raise_if_stop_requested
 
 from .activity_flow import reenter_activity_for_probe
+from .board_geometry_flow import RuntimeBoardLocator, save_latest_before
+from vision.board_geometry import BoardGeometry
 from .sonar_page import (
     detect_sonar_page_state,
     wait_activity_detail_ready,
@@ -38,6 +40,10 @@ class ProbeContext:
     screen_point: Point
     before_path: Path
     after_path: Path
+    recognition_center: Point | None = None
+    runtime_locator: RuntimeBoardLocator | None = None
+    before_geometry: BoardGeometry | None = None
+    after_geometry: BoardGeometry | None = None
 
 
 @dataclass
@@ -50,6 +56,10 @@ class ProbeProgress:
     after_path: Path | None = None
     click_committed: bool = False
     after_captured: bool = False
+    recognition_center: Point | None = None
+    runtime_locator: RuntimeBoardLocator | None = None
+    before_geometry: BoardGeometry | None = None
+    after_geometry: BoardGeometry | None = None
 
     def mark_click_committed(self) -> None:
         """记录 ADB 已接受目标格点击。"""
@@ -63,6 +73,10 @@ class ProbeProgress:
         self.after_path = None
         self.click_committed = False
         self.after_captured = False
+        self.recognition_center = None
+        self.runtime_locator = None
+        self.before_geometry = None
+        self.after_geometry = None
 
     def build_context(self) -> ProbeContext:
         """把完整检查点转换成后续识别上下文。"""
@@ -82,6 +96,10 @@ class ProbeProgress:
             screen_point=self.screen_point,
             before_path=self.before_path,
             after_path=self.after_path,
+            recognition_center=self.recognition_center,
+            runtime_locator=self.runtime_locator,
+            before_geometry=self.before_geometry,
+            after_geometry=self.after_geometry,
         )
 
 
@@ -233,6 +251,17 @@ def prepare_probe_once(
         actual_progress.before_path
     )
 
+    locator = getattr(board, "runtime_locator", None)
+    if locator is not None:
+        before, geometry, (x, y) = locator.prepare_target(
+            adb, page, board, cell,
+            first_image=adb.read_image(actual_progress.before_path), stop_event=stop_event)
+        save_latest_before(actual_progress.before_path, before)
+        actual_progress.screen_point = (x, y)
+        actual_progress.recognition_center = locator.reference_point(cell)
+        actual_progress.runtime_locator = locator
+        actual_progress.before_geometry = geometry
+
     raise_if_stop_requested(
         stop_event
     )
@@ -292,6 +321,13 @@ def prepare_probe_once(
         actual_progress.after_path
     )
     actual_progress.after_captured = True
+
+    if locator is not None:
+        # 重新进页可能重置相机；after 必须重新定位，不能沿用点击时坐标。
+        after_image = adb.read_image(actual_progress.after_path)
+        actual_progress.after_geometry = locator.locate(after_image, page)
+        actual_progress.after_geometry.require_visible_target(after_image, locator.level, cell)
+        board.set_screen_quad(actual_progress.after_geometry.current_quad)
 
     raise_if_stop_requested(
         stop_event

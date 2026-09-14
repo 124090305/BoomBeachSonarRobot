@@ -17,6 +17,7 @@ from stop_control import (
     raise_if_stop_requested,
 )
 from vision import DiamondHitConfig
+from vision.board_geometry import BoardGeometryError
 
 from .auto_probe_exception_recovery import (
     restart_auto_probe_once,
@@ -106,6 +107,10 @@ def _run_once_with_restart_fallback(
                 on_result_committed=on_result_committed,
             )
         except StopRequestedError:
+            raise
+
+        except BoardGeometryError:
+            # 定位歧义不通过网络重启兜底，必须由用户检查现场。
             raise
 
         except RuntimeError as exc:

@@ -45,6 +45,7 @@ def recognize_live_board(
     empty_reference: np.ndarray,
     stop_event=None,
     output_dir: Path | None = None,
+    runtime_geometry: bool = False,
 ) -> LiveBoardRecognitionResult:
     """连续采集并合并整盘结果；停止检查不会插入单帧算法内部。"""
     if live_config.frame_count <= 0:
@@ -64,11 +65,12 @@ def recognize_live_board(
                 level_config=level_config,
                 config=vision_config,
                 output_dir=output_dir / f"frame_{index + 1:02d}" if output_dir else None,
+                runtime_geometry=runtime_geometry,
             )
         )
         raise_if_stop_requested(stop_event)
         if len(frames) >= live_config.frame_count:
-            live = _summarize_frames(frames, live_config, vision_config)
+            live = _summarize_frames(frames, live_config, vision_config, level_config.board_quad)
             # 少量固定遮挡不会无限补拍；时间分歧、末帧失效才追加观测。
             if live.stable and not live.disagreement_cells:
                 break
@@ -92,7 +94,7 @@ def _usable(item):
     return item.valid and item.alignment.success and item.quality == "usable"
 
 
-def _summarize_frames(frames, live_config, vision_config):
+def _summarize_frames(frames, live_config, vision_config, board_quad=None):
     usable = [item for item in frames if _usable(item)]
     pool = usable or frames
     best = max(pool, key=lambda item: item.quality_score)
@@ -110,6 +112,17 @@ def _summarize_frames(frames, live_config, vision_config):
         and len(disagreements) <= live_config.maximum_disagreement_cells
     )
     issues = list(merge_issues)
+    # 同一状态的棋盘也可能仍在拖动，格子投票不能代替坐标稳定性审核。
+    recent = frames[-live_config.minimum_usable_frames:]
+    if board_quad is not None and all(item.alignment.method == "outline_seeded_grid_homography" for item in recent):
+        from .board_geometry import GEOMETRY_CONFIG
+        from .board_alignment import project
+        # 在参考棋盘实际像素范围内比较，避免整张截图外推放大误差。
+        positions = [project(board_quad, np.linalg.inv(np.asarray(item.alignment.current_to_reference))) for item in recent]
+        drift = max(float(np.linalg.norm(points-positions[-1], axis=1).max()) for points in positions)
+        if drift > GEOMETRY_CONFIG.stable_error_px:
+            stable = False
+            issues.append(f"棋盘坐标仍在移动：最大偏差 {drift:.1f}px")
     if len(usable) < live_config.minimum_usable_frames:
         issues.append(
             f"可用实时帧不足：{len(usable)}/{len(frames)}"
