@@ -216,7 +216,7 @@ def recover_after_hit_once(
 
     if not state.weak_enabled:
         raise RuntimeError(
-            "HIT 恢复前弱网 DROP 没有开启"
+            "HIT 恢复前DROP 弱网状态没有开启"
         )
 
     network.restore_network()
@@ -262,7 +262,7 @@ def recover_after_hit_once(
         != SonarPageState.ACTIVITY_DETAIL
     ):
         raise RuntimeError(
-            "HIT 恢复失败：5 秒联网后没有回到活动详情页"
+            "HIT 恢复失败：5 秒联网后没有回到活动棋盘页面"
         )
 
     if final_network.reject_enabled:
@@ -272,7 +272,7 @@ def recover_after_hit_once(
 
     if not final_network.weak_enabled:
         raise RuntimeError(
-            "HIT 恢复失败：弱网 DROP 没有重新开启"
+            "HIT 恢复失败：DROP 弱网状态没有重新开启"
         )
 
     result = ProbeRecoveryResult(
@@ -393,7 +393,7 @@ def recover_after_miss_once(
 
     if not state.weak_enabled:
         raise RuntimeError(
-            "进入恢复链前弱网 DROP 没有开启"
+            "进入恢复链前DROP 弱网状态没有开启"
         )
 
     retry_match = None
@@ -514,19 +514,19 @@ def recover_after_miss_once(
     ):
         raise RuntimeError(
             "单发恢复失败："
-            "恢复后没有回到活动详情页"
+            "恢复后没有回到活动棋盘页面"
         )
 
     if final_network.reject_enabled:
         raise RuntimeError(
             "单发恢复失败："
-            "恢复后 REJECT 仍然开启"
+            "恢复后 REJECT 断网状态仍然开启"
         )
 
     if not final_network.weak_enabled:
         raise RuntimeError(
             "单发恢复失败："
-            "恢复后弱网 DROP 没有重新开启"
+            "恢复后DROP 弱网状态没有重新开启"
         )
 
     result = ProbeRecoveryResult(

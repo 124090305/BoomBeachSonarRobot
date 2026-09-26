@@ -31,7 +31,7 @@ from flows import (
 
 PAGE_STATE_TEXT = {
     SonarPageState.ACTIVITY_DETAIL: (
-        "活动详情页"
+        "活动棋盘页面"
     ),
     SonarPageState.HOME_SONAR_VISIBLE: (
         "主岛，声纳已可见"
@@ -56,7 +56,7 @@ def main() -> None:
     )
     print(
         "程序会自己检查主岛、寻找声纳、"
-        "开启弱网并进入活动详情。"
+        "开启弱网并进入活动棋盘页面。"
     )
     print()
     print(
@@ -166,7 +166,7 @@ def main() -> None:
     print()
     print(
         "测试通过："
-        "当前已经位于声纳活动详情页，"
+        "当前已经位于声纳活动棋盘页面，"
         "并保持弱网 DROP。"
     )
 

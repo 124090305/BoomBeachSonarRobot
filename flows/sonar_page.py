@@ -120,7 +120,7 @@ def detect_sonar_page_state(
             stop_event
         )
         logger.info(
-            "页面状态：活动详情页"
+            "页面状态：活动棋盘页面"
         )
         return (
             SonarPageState.ACTIVITY_DETAIL
@@ -177,7 +177,7 @@ def detect_sonar_page_state(
 
     logger.warning(
         "页面状态：未知；"
-        "未识别到活动详情、声纳或主岛活动按钮；"
+        "未识别到活动棋盘页面、声纳或主岛活动按钮；"
         "当前声纳最高相似度=%.3f",
         sonar_score,
     )
@@ -199,7 +199,7 @@ def wait_home_island_ready(
     )
 
     logger.info(
-        "等待主岛就绪"
+        "等待主岛按键出现"
     )
 
     match = page.wait_template(
@@ -229,7 +229,7 @@ def swipe_home_up(
     *,
     stop_event: Event | None = None,
 ) -> None:
-    """主岛向上拖动画面，露出海边声纳。"""
+    """主岛向上拖动画面，露出海边声纳浮标。"""
     start_x, start_y = (
         ACTIVITY_PAGE_CONFIG.home_swipe_start
     )
@@ -260,7 +260,7 @@ def wait_sonar_ready(
     *,
     stop_event: Event | None = None,
 ) -> MatchResult | None:
-    """等待主岛就绪，并在必要时上划寻找声纳。"""
+    """等待主岛按键出现，并在必要时上划寻找声纳。"""
     actual_timeout = (
         ACTIVITY_PAGE_CONFIG.sonar_wait_timeout
         if timeout is None
@@ -351,7 +351,7 @@ def wait_sonar_ready(
 
         if match is not None:
             logger.info(
-                "声纳等待成功："
+                "等待声纳成功出现："
                 "中心=%s，相似度=%.3f，检测次数=%s",
                 match.center,
                 match.score,
@@ -391,7 +391,7 @@ def wait_activity_detail_ready(
     *,
     stop_event: Event | None = None,
 ) -> bool:
-    """等待退出按钮出现，以确认活动详情页已就绪。"""
+    """等待退出按钮出现，以确认棋盘页面已准备就绪。"""
     actual_timeout = (
         ACTIVITY_PAGE_CONFIG.activity_detail_ready_timeout
         if timeout is None
@@ -406,13 +406,13 @@ def wait_activity_detail_ready(
 
     if match is None:
         logger.warning(
-            "活动详情页未就绪：未找到 %s",
+            "棋盘页面未准备就绪：未找到 %s",
             ACTIVITY_PAGE_CONFIG.quit_activity_template,
         )
         return False
 
     logger.info(
-        "活动详情页已就绪：退出按钮中心=%s",
+        "棋盘页面已准备就绪：退出按钮中心=%s",
         match.center,
     )
 

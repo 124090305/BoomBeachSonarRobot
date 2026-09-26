@@ -58,7 +58,7 @@ class ManualRecognitionDialog(tk.Toplevel):
         self.canvases = []
         self.transforms = []
         self.buttons = {}
-        self.title("人工识别")
+        self.title("人工测试模式")
         self.transient(master)
         # 不 grab、不 wait_window：原窗口停止按钮和消息刷新始终可用。
         self.protocol("WM_DELETE_WINDOW", self.cancel)

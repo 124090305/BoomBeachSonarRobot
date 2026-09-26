@@ -272,7 +272,7 @@ class BoomBeachSonarApp(tk.Tk):
         self.scroll_container = layout.scroll_container
         self.manual_recognition_var = tk.BooleanVar(self, False)
         self.manual_recognition_toggle = ttk.Checkbutton(
-            layout.auto_loop_button.master, text="人工识别", variable=self.manual_recognition_var,
+            layout.auto_loop_button.master, text="人工测试模式", variable=self.manual_recognition_var,
             command=self.toggle_manual_trial)
         self.manual_recognition_toggle.pack(side=tk.LEFT, before=layout.auto_loop_button, padx=(0, 8))
         self.scroll_container.bind_mousewheel_tree()
@@ -300,14 +300,14 @@ class BoomBeachSonarApp(tk.Tk):
                 provider.cancel()
                 context = self._runtime.with_level_state(self._saved_formal_state)
                 self.page.manual_results = None
-                self._write_log("已关闭人工识别，恢复原正式棋盘；循环保持停止。")
+                self._write_log("已关闭人工测试模式，恢复原正式棋盘；循环保持停止。")
             self._close_recognition_dialog()
             self._auto_loop_bridge.set_context(context)
             self._apply_level_context(context)
             self.auto_loop_total_var.set("发数：0 | HIT：0 | MISS：0")
             self.auto_loop_last_var.set("上一发：-")
             if self.manual_recognition_var.get():
-                messagebox.showwarning("人工识别",
+                messagebox.showwarning("人工测试模式",
                     "本模式仍会真实操作模拟器，包括点击、滑动、网络控制和游戏重启。\n"
                     "活动缺失或人工判断错误可能导致误触。", parent=self)
         except Exception as exc:
@@ -318,7 +318,7 @@ class BoomBeachSonarApp(tk.Tk):
     def submit_trial_result(self, request_id, **answer):
         provider = manual_provider(self.page)
         if self._closing or provider is None:
-            raise ValueError("人工识别已关闭")
+            raise ValueError("人工测试模式已关闭")
         provider.submit(request_id, **answer)
         self.auto_loop_state_var.set("运行中")
         self.status_var.set("人工结果已提交，原流程继续")
@@ -1017,7 +1017,7 @@ class BoomBeachSonarApp(tk.Tk):
                         except Exception as exc:
                             self.stop_auto_loop()
                             self._show_error(exc)
-                    self.auto_loop_state_var.set("等待人工识别")
+                    self.auto_loop_state_var.set("等待人工测试结果")
                     self.status_var.set(payload.step)
                 continue
 

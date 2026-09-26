@@ -187,7 +187,7 @@ def prepare_probe_once(
         )
 
         raise RuntimeError(
-            "执行单发探测前没有检测到活动详情页。"
+            "执行单发探测前没有检测到活动棋盘页面。"
             "当前页面状态="
             f"{current_state.value}"
         )
@@ -262,7 +262,7 @@ def prepare_probe_once(
     )
 
     logger.info(
-        "准备退出当前活动详情页"
+        "准备退出当前活动棋盘页面"
     )
 
     quit_match = page.click_template(

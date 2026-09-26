@@ -27,7 +27,7 @@ def ensure_auto_probe_ready(
     *,
     stop_event: Event | None = None,
 ) -> None:
-    """整理到活动详情页、弱网开启、REJECT 关闭的探测状态。"""
+    """整理到活动棋盘页面、弱网开启、REJECT 关闭的探测状态。"""
     raise_if_stop_requested(
         stop_event
     )
@@ -47,7 +47,7 @@ def ensure_auto_probe_ready(
 
     if network_state.reject_enabled:
         raise RuntimeError(
-            "开始自动探测前仍存在 REJECT 断网。"
+            "开始自动探测前仍处于REJECT 断网状态。"
             "请先恢复网络。"
         )
 
@@ -85,7 +85,7 @@ def ensure_auto_probe_ready(
         ):
             raise RuntimeError(
                 "自动探测准备失败："
-                "没有进入活动详情页"
+                "没有进入活动棋盘页面"
             )
 
     final_network = network.get_state()
@@ -111,13 +111,13 @@ def ensure_auto_probe_ready(
     if final_network.reject_enabled:
         raise RuntimeError(
             "自动探测准备失败："
-            "REJECT 仍然开启"
+            "REJECT 断网状态仍然开启"
         )
 
     if not final_network.weak_enabled:
         raise RuntimeError(
             "自动探测准备失败："
-            "弱网 DROP 没有开启"
+            "DROP 弱网状态没有开启"
         )
 
     logger.info(

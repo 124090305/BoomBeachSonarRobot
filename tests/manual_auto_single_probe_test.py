@@ -70,7 +70,7 @@ def main() -> None:
     )
     print()
     print("运行前要求：")
-    print("1. 模拟器已经进入声纳活动详情，棋盘可见。")
+    print("1. 模拟器已经进入声纳活动棋盘页面，棋盘可见。")
     print("2. 如需按当前保护流程测试，请先开启弱网 DROP。")
     print("3. 本测试只执行一发，不处理 REJECT / retry。")
     print("4. unknown / unopened 不写回策略，pending_cell 会保留。")

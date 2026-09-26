@@ -20,12 +20,12 @@ from vision.image_match import read_image
 
 SOURCE = "manual_trial"
 WAIT_POLL_SECONDS = config.STOP_POLL_INTERVAL
-PAGE_OPTIONS = (("activity_detail", "活动详情页"), ("home_sonar_visible", "主岛，声纳可见"),
+PAGE_OPTIONS = (("activity_detail", "活动棋盘页面"), ("home_sonar_visible", "主岛，声纳浮标可见"),
                 ("home", "主岛"), ("unknown", "无法判断"))
 TEMPLATE_OPTIONS = (("found", "找到"), ("missing", "未找到"), ("timeout", "判定超时"))
 PROBE_OPTIONS = (("hit", "命中 HIT"), ("miss", "未命中 MISS"),
-                 ("unopened", "未开启"), ("unknown", "无法判断"))
-TEMPLATE_NAMES = {"activity_button.png": "主岛活动按钮", "sonar_join.png": "海边声纳",
+                 ("unopened", "未开启"), ("unknown", "无法判断本格结果"))
+TEMPLATE_NAMES = {"activity_button.png": "主岛活动按钮", "sonar_join.png": "海边声纳浮标",
                   "sonar_join_label.png": "声纳标签", "quit_activity.png": "退出活动按钮",
                   "retry.png": "重试按钮", "retry1.png": "重试按钮", "victory.png": "胜利画面"}
 logger = get_logger(__name__)
@@ -258,7 +258,7 @@ class ManualResultProvider:
                  refresh=None, started_at=None, timeout=None, poll_interval=None):
         if waiting and (refresh is None or started_at is None or timeout is None
                         or poll_interval is None or poll_interval <= 0 or timeout < 0):
-            raise ValueError("等待型人工识别需要原截图方法、计时起点、超时和轮询间隔")
+            raise ValueError("等待型人工测试模式需要原截图方法、计时起点、超时和轮询间隔")
         names = (name,) if isinstance(name, (str, Path)) else tuple(name)
         paths = tuple(Path(item) if Path(item).is_absolute() else config.TEMPLATE_DIR / item for item in names)
         templates = tuple(read_image(path) for path in paths)

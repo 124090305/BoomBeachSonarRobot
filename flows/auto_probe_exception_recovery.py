@@ -69,12 +69,12 @@ def restart_auto_probe_once(
 
     if final_network.reject_enabled:
         raise RuntimeError(
-            "异常重启恢复失败：REJECT 仍然开启"
+            "异常重启恢复失败：REJECT 断网状态仍然开启"
         )
 
     if not final_network.weak_enabled:
         raise RuntimeError(
-            "异常重启恢复失败：弱网 DROP 没有重新开启"
+            "异常重启恢复失败：DROP 弱网状态没有重新开启"
         )
 
     result = ProbeRecoveryResult(

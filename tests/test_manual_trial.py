@@ -150,7 +150,7 @@ class TrialFlowTests(unittest.TestCase):
             nonlocal sonar_checks
             if request.kind == "page":
                 return next(pages, "activity_detail")
-            if "海边声纳" in request.step:
+            if "海边声纳浮标" in request.step:
                 sonar_checks += 1
                 return "missing" if sonar_checks == 1 else "found"
             return "miss" if request.kind == "probe" else None

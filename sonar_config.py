@@ -119,7 +119,7 @@ DEFAULT_LEVEL_CONFIG = SonarLevelConfig(
     empty_reference_path=BOARD_REFERENCE_DIR / "level_11_empty.png",
 )
 
-INITIAL_LEVEL = int(os.getenv("SONAR_INITIAL_LEVEL", "10"))
+INITIAL_LEVEL = int(os.getenv("SONAR_INITIAL_LEVEL", "11"))
 
 _EARLY_LEVEL_SUBMARINES = {
     1: (3,),

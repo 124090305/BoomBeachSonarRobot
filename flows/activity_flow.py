@@ -109,7 +109,7 @@ def enter_activity_initial(
 
     if network_state.reject_enabled:
         raise RuntimeError(
-            "当前仍开启 REJECT 断网，"
+            "当前仍处于 REJECT 断网状态，"
             "请先恢复网络再执行初始进入活动"
         )
 
@@ -257,7 +257,7 @@ def enter_activity_initial(
         )
 
         logger.info(
-            "已点击声纳活动详情入口："
+            "已点击声纳活动入口："
             "(%s, %s)",
             detail_x,
             detail_y,
@@ -327,7 +327,7 @@ def enter_activity_initial(
         )
 
         logger.info(
-            "初始进入声纳活动完成："
+            "进入声纳活动并完成初始化："
             "initial=%s，final=%s，"
             "sonar=%s，weak=%s",
             result.initial_state.value,
@@ -360,7 +360,7 @@ def reenter_activity_for_probe(
     *,
     stop_event: Event | None = None,
 ) -> None:
-    """退出活动详情后重新进入当前声纳活动。"""
+    """退出活动棋盘页面后重新进入当前声纳活动。"""
     raise_if_stop_requested(
         stop_event
     )
@@ -407,7 +407,7 @@ def reenter_activity_for_probe(
     )
 
     logger.info(
-        "已点击活动详情入口：(%s, %s)",
+        "已点击活动入口：(%s, %s)",
         detail_x,
         detail_y,
     )
@@ -423,7 +423,7 @@ def reenter_activity_for_probe(
     if not ready:
         raise RuntimeError(
             "重新进入活动失败："
-            "点击活动详情入口后没有检测到退出按钮"
+            "点击活动棋盘页面入口后没有检测到退出按钮"
         )
 
     dismiss_activity_start_hint(
@@ -432,7 +432,7 @@ def reenter_activity_for_probe(
     )
 
     logger.info(
-        "重新进入声纳活动完成"
+        "重新进入声纳活动棋盘页面完成"
     )
 
 

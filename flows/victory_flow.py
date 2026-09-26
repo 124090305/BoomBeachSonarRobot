@@ -21,7 +21,7 @@ def handle_victory_transition(
     stop_event: Event | None = None,
     flow_config: ActivityPageConfig = ACTIVITY_PAGE_CONFIG,
 ) -> int:
-    """识别并连续跳过胜利页面，确认下一关详情页就绪。"""
+    """识别并连续跳过胜利页面，确认下一关活动棋盘页面就绪。"""
     raise_if_stop_requested(stop_event)
     match = page.wait_template(
         flow_config.victory_template,
@@ -71,7 +71,7 @@ def handle_victory_transition(
             f"胜利处理后未进入下一关（{flow_config.next_level_ready_timeout:.1f} 秒）"
         )
 
-    logger.info("胜利页面处理完成，下一关详情页已就绪")
+    logger.info("胜利页面处理完成，下一关活动棋盘页面已就绪")
     return handled
 
 
