@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 import config
 
 
 _LOGGING_READY = False
+_TRIAL_SESSION = ContextVar("sonar_trial_session", default=None)
+
+
+class TrialLogFilter(logging.Filter):
+    def filter(self, record):
+        session = _TRIAL_SESSION.get()
+        if session and not getattr(record, "trial_tagged", False):
+            record.msg = f"[人工试运行 {session[:8]}] {record.getMessage()}"
+            record.args = ()
+            record.trial_tagged = True
+        return True
+
+
+@contextmanager
+def trial_log_scope(session=None):
+    token = _TRIAL_SESSION.set(session)
+    try:
+        yield
+    finally:
+        _TRIAL_SESSION.reset(token)
 
 
 class GuiLogFormatter(logging.Formatter):
@@ -101,9 +123,10 @@ def get_logger(
     """获取项目 logger。"""
     setup_logging()
 
-    return logging.getLogger(
-        name
-    )
+    logger = logging.getLogger(name)
+    if not any(isinstance(item, TrialLogFilter) for item in logger.filters):
+        logger.addFilter(TrialLogFilter())
+    return logger
 
 
 def attach_log_handler(

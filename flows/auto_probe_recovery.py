@@ -14,6 +14,7 @@ from controllers.adb_controller import AdbController
 from controllers.network_controller import NetworkController
 from controllers.page_controller import PageController
 from logger import get_logger
+from manual_recognition import manual_provider
 from sonar_config import AUTO_PROBE_CONFIG
 from stop_control import (
     StopRequestedError,
@@ -48,8 +49,10 @@ def wait_retry_with_failure_capture(
     adb: AdbController,
     *,
     stop_event: Event | None = None,
+    page: PageController | None = None,
 ) -> tuple[MatchResult | None, Path | None]:
     """等待 retry；超时时保存相似度最高的一帧。"""
+    provider = manual_provider(page)
     raise_if_stop_requested(
         stop_event
     )
@@ -93,6 +96,11 @@ def wait_retry_with_failure_capture(
 
         attempts += 1
         screenshot = adb.read_screenshot()
+        if provider is not None:
+            match = provider.template(screenshot, template_path, waiting=True,
+                                      needs_position=True, stop_event=stop_event, refresh=adb.read_screenshot,
+                                      started_at=deadline-timeout, timeout=timeout, poll_interval=poll_interval)
+            return match, provider.last_diagnostic_path if match is None else None
 
         match, best_score = find_template_with_score(
             screenshot,
@@ -404,6 +412,7 @@ def recover_after_miss_once(
             wait_retry_with_failure_capture(
                 adb=adb,
                 stop_event=stop_event,
+                page=page,
             )
         )
 

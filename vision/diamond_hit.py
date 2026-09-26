@@ -137,6 +137,8 @@ class DiamondHitResult:
     cross_boundary_score: float = 0.0
     cross_boundary_direction: str | None = None
     sunk_candidate: bool = False
+    source: str = "vision"
+    request_id: str | None = None
 
 
 def is_diamond_hit(

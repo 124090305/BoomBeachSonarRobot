@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from threading import Event
@@ -12,6 +12,7 @@ from controllers.adb_controller import AdbController
 from controllers.network_controller import NetworkController
 from controllers.page_controller import PageController
 from logger import get_logger
+from manual_recognition import manual_provider
 from sonar import (
     Cell,
     CellState,
@@ -259,9 +260,8 @@ def _complete_recognition_and_sync(
                 )
             )
 
-        recognition_state = (
-            actual_progress.recognition.state
-        )
+    if actual_progress.hit is None:
+        recognition_state = actual_progress.recognition.state
 
         if not is_conclusive_recognition_state(
             recognition_state
@@ -285,11 +285,12 @@ def _complete_recognition_and_sync(
         )
 
     logger.info(
-        "自动命中判断："
+        "自动命中判断（来源=%s）："
         "cell=%s，state=%s，confidence=%.3f，"
         "score=%.3f，center=%s，probe_offset=%s，"
         "inside=%.3f，boundary=%.3f，outside=%.3f，"
         "cross=%.3f，direction=%s，sunk_candidate=%s -> %s",
+        recognition.source,
         context.cell,
         recognition.state,
         recognition.confidence,
@@ -329,6 +330,8 @@ def _complete_recognition_and_sync(
                     else None
                 ),
             )
+            if recognition.source == "manual_trial" and commit.confirmation_source == "visual":
+                commit = replace(commit, confirmation_source="manual_trial")
         else:
             newly_confirmed = tuple(
                 strategy.report_result(
@@ -432,7 +435,7 @@ def _log_sunk_validation(
 
     logger.info(
         "SUNK 候选策略校验："
-        "cell=%s，visual_direction=%s，hit_cells=%s，"
+        "cell=%s，candidate_direction=%s，hit_cells=%s，"
         "candidate_length=%s，remaining=%s，valid=%s，"
         "reason=%s，source=%s，final=%s",
         cell,
@@ -488,6 +491,9 @@ def run_auto_probe_once(
     on_result_committed: ResultCommittedCallback | None = None,
 ) -> AutoProbeOnceResult:
     """执行一整发自动探测，并按结果完成对应恢复。"""
+    provider = manual_provider(page)
+    if provider is not None:
+        provider.target = strategy.pending_cell
     raise_if_stop_requested(
         stop_event
     )
@@ -514,6 +520,9 @@ def run_auto_probe_once(
         )
     )
 
+    if provider is not None:
+        actual_output_dir = actual_output_dir / "manual_trial" / provider.session_id
+
     if actual_progress.context is None:
         actual_progress.context = prepare_probe_once(
             adb=adb,
@@ -538,6 +547,12 @@ def run_auto_probe_once(
     raise_if_stop_requested(
         stop_event
     )
+
+    # 人工等待必须位于不可中断写回区之前。提交已被接受后，完整同步再检查停止。
+    if provider is not None and actual_progress.recognition is None:
+        before = adb.read_image(context.before_path)
+        after = adb.read_image(context.after_path)
+        actual_progress.recognition = provider.probe(before, after, context, stop_event)
 
     _complete_recognition_and_sync(
         adb=adb,

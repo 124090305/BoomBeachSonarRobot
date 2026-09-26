@@ -14,6 +14,7 @@ from controllers import (
 from sonar import (
     SonarBoard,
     SonarStrategy,
+    ManualEditSession,
 )
 from flows.level_loop import LevelState, create_level_state
 from sonar_config import INITIAL_LEVEL
@@ -83,12 +84,30 @@ class AppRuntimeContext:
         serial: str,
     ) -> AppRuntimeContext:
         """切换设备控制器，同时保留当前棋盘和策略状态。"""
-        return self.create(
+        context = self.create(
             serial=serial,
             board=self.board,
             strategy=self.strategy,
             current_level=self.current_level,
         )
+        provider = getattr(self.page, "manual_results", None)
+        if provider is not None:
+            context.page.manual_results = provider
+        return context
+
+    def isolated_level_state(self) -> LevelState:
+        """复制当前事实与策略快照，试运行的任何写入均不污染原对象。"""
+        ManualEditSession(self.board, self.strategy.get_confirmed_ships()).validate_for_apply(
+            use_safety_rule=self.strategy.use_safety_rule)
+        state = create_level_state(self.current_level)
+        snapshot = self.board.snapshot()
+        state.board.replace_states(snapshot.states)
+        if self.board.has_complete_mapping:
+            state.board.set_screen_points(point for row in snapshot.screen_points for point in row)
+        else:
+            state.board.clear_screen_mapping()
+        state.strategy.restore_from_snapshot(self.strategy.snapshot())
+        return state
 
     def with_level_state(self, state: LevelState) -> AppRuntimeContext:
         """沿用控制器和互斥锁，切换到新关卡的全新棋盘与策略。"""

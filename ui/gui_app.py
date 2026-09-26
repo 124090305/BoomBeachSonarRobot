@@ -5,12 +5,14 @@ import os
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 from typing import Callable
 
 import config
 
 from flows import run_screenshot_check
+from flows.level_loop import LevelState
+from manual_recognition import ManualResultProvider, manual_provider
 from logger import (
     GuiLogFormatter,
     attach_log_handler,
@@ -29,6 +31,7 @@ from .button_state import (
     StatefulButton,
 )
 from .runtime_context import AppRuntimeContext
+from .manual_recognition_dialog import ManualRecognitionDialog
 from sonar import ManualEditError, ManualEditSession, apply_manual_edits
 
 
@@ -120,6 +123,8 @@ class BoomBeachSonarApp(tk.Tk):
         self._close_poll_after_id: str | None = None
         self._closing = False
         self._context_operation_count = 0
+        self._saved_formal_state = None
+        self._recognition_dialog = None
 
         self._build_ui()
         self._startup_after_id = self.after(
@@ -265,6 +270,64 @@ class BoomBeachSonarApp(tk.Tk):
         self.board_view = layout.board_view
         self.level_selector = layout.level_selector
         self.scroll_container = layout.scroll_container
+        self.manual_recognition_var = tk.BooleanVar(self, False)
+        self.manual_recognition_toggle = ttk.Checkbutton(
+            layout.auto_loop_button.master, text="人工识别", variable=self.manual_recognition_var,
+            command=self.toggle_manual_trial)
+        self.manual_recognition_toggle.pack(side=tk.LEFT, before=layout.auto_loop_button, padx=(0, 8))
+        self.scroll_container.bind_mousewheel_tree()
+        self._refresh_trial_controls()
+
+    def _refresh_trial_controls(self):
+        toggle = self.__dict__.get("manual_recognition_toggle")
+        if toggle is not None:
+            toggle.state(["!disabled"] if self._level_change_allowed() else ["disabled"])
+
+    def toggle_manual_trial(self):
+        provider = manual_provider(self.page)
+        if not self._level_change_allowed():
+            self.manual_recognition_var.set(provider is not None)
+            return
+        try:
+            if self.manual_recognition_var.get():
+                trial_state = self._runtime.isolated_level_state()
+                self._saved_formal_state = LevelState(self._runtime.current_level,
+                                                     self.sonar_board, self.sonar_strategy)
+                self.page.manual_results = ManualResultProvider()
+                context = self._runtime.with_level_state(trial_state)
+                self._write_log("[人工试运行] 已复制当前棋盘和策略；正式棋盘独立保留。")
+            else:
+                provider.cancel()
+                context = self._runtime.with_level_state(self._saved_formal_state)
+                self.page.manual_results = None
+                self._write_log("已关闭人工识别，恢复原正式棋盘；循环保持停止。")
+            self._close_recognition_dialog()
+            self._auto_loop_bridge.set_context(context)
+            self._apply_level_context(context)
+            self.auto_loop_total_var.set("发数：0 | HIT：0 | MISS：0")
+            self.auto_loop_last_var.set("上一发：-")
+            if self.manual_recognition_var.get():
+                messagebox.showwarning("人工识别",
+                    "本模式仍会真实操作模拟器，包括点击、滑动、网络控制和游戏重启。\n"
+                    "活动缺失或人工判断错误可能导致误触。", parent=self)
+        except Exception as exc:
+            self.manual_recognition_var.set(manual_provider(self.page) is not None)
+            self._show_error(exc)
+        self._refresh_trial_controls()
+
+    def submit_trial_result(self, request_id, **answer):
+        provider = manual_provider(self.page)
+        if self._closing or provider is None:
+            raise ValueError("人工识别已关闭")
+        provider.submit(request_id, **answer)
+        self.auto_loop_state_var.set("运行中")
+        self.status_var.set("人工结果已提交，原流程继续")
+
+    def _close_recognition_dialog(self):
+        dialog = self.__dict__.get("_recognition_dialog")
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
+        self._recognition_dialog = None
 
     def _apply_level_context(
         self,
@@ -293,6 +356,9 @@ class BoomBeachSonarApp(tk.Tk):
         bridge = attributes.get("_auto_loop_bridge")
         if bridge is not None and bridge.running:
             return False
+        if bridge is not None and getattr(bridge, "thread", None) is not None:
+            # 线程退出后，先消费结果和终态消息，再允许切换上下文。
+            return False
         runtime = attributes.get("_runtime")
         if runtime is not None and runtime.control_lock.locked():
             return False
@@ -301,6 +367,7 @@ class BoomBeachSonarApp(tk.Tk):
         return True
 
     def _refresh_level_selector_lock(self) -> None:
+        self._refresh_trial_controls()
         selector = self.__dict__.get("level_selector")
         if selector is None:
             return
@@ -311,6 +378,7 @@ class BoomBeachSonarApp(tk.Tk):
     def _begin_context_operation(self) -> None:
         count = self.__dict__.get("_context_operation_count", 0)
         self._context_operation_count = count + 1
+        self._refresh_trial_controls()
         selector = self.__dict__.get("level_selector")
         if selector is not None:
             selector.set_enabled(False)
@@ -359,6 +427,8 @@ class BoomBeachSonarApp(tk.Tk):
 
     def apply_device(self) -> None:
         """切换 ADB 设备，保留当前棋盘和策略状态。"""
+        if not self._level_change_allowed():
+            return
         if self._manual_session is not None:
             messagebox.showwarning(
                 "人工干预中",
@@ -872,6 +942,7 @@ class BoomBeachSonarApp(tk.Tk):
             return
 
         self._auto_loop_bridge.request_stop()
+        self._close_recognition_dialog()
         self.auto_loop_state_var.set("停止中")
         self.status_var.set("已请求停止：等待当前小动作完成...")
         self._write_log(
@@ -932,6 +1003,24 @@ class BoomBeachSonarApp(tk.Tk):
                 )
                 continue
 
+            if kind == "manual_request":
+                provider = manual_provider(self.page)
+                if (provider is not None and provider.pending is payload and not self._closing
+                        and not self._auto_loop_bridge.stop_event.is_set()):
+                    dialog = self._recognition_dialog
+                    if dialog is None or not dialog.winfo_exists() or dialog.request is not payload:
+                        self._close_recognition_dialog()
+                        try:
+                            self._recognition_dialog = ManualRecognitionDialog(
+                                self, payload, on_submit=self.submit_trial_result, on_stop=self.stop_auto_loop,
+                                on_frame_displayed=provider.mark_displayed)
+                        except Exception as exc:
+                            self.stop_auto_loop()
+                            self._show_error(exc)
+                    self.auto_loop_state_var.set("等待人工识别")
+                    self.status_var.set(payload.step)
+                continue
+
             if kind == "round":
                 index, result = payload
                 result_text = getattr(
@@ -962,7 +1051,7 @@ class BoomBeachSonarApp(tk.Tk):
                 self._pending_auto_loop_terminal = (kind, payload)
                 break
 
-            if kind == "error":
+            if kind in {"error", "stopped"}:
                 self._pending_auto_loop_terminal = (kind, payload)
                 break
 
@@ -974,6 +1063,15 @@ class BoomBeachSonarApp(tk.Tk):
             self._pending_auto_loop_terminal = None
             self._finish_auto_loop_terminal(*terminal)
 
+        # 沿用原 100ms 消息刷新，只取最新待显示帧；每轮至多绘制一次，避免淹没停止按钮。
+        provider = manual_provider(self.page)
+        dialog = self.__dict__.get("_recognition_dialog")
+        if provider is not None and dialog is not None and dialog.winfo_exists():
+            frame = provider.take_latest_frame()
+            if frame is not None:
+                dialog.update_frame(frame)
+            dialog.update_elapsed()
+
         self._refresh_level_selector_lock()
 
         if self.winfo_exists() and not self._closing:
@@ -984,9 +1082,15 @@ class BoomBeachSonarApp(tk.Tk):
 
     def _finish_auto_loop_terminal(self, kind: str, payload: object) -> None:
         """后台线程退出后才把循环按钮恢复为空闲。"""
+        self._close_recognition_dialog()
         self._auto_loop_button.complete_toggle(False)
         self._refresh_manual_button_locks()
         self._refresh_network_buttons_async()
+
+        if kind == "stopped":
+            self.auto_loop_state_var.set("已停止")
+            self.status_var.set("已停止人工等待")
+            return
 
         if kind == "error":
             self.auto_loop_state_var.set("错误")
@@ -1052,6 +1156,7 @@ class BoomBeachSonarApp(tk.Tk):
 
         self._closing = True
         self._auto_loop_bridge.request_stop()
+        self._close_recognition_dialog()
         self._cancel_regular_after_callbacks()
         scroll_container = self.__dict__.get(
             "scroll_container"
@@ -1425,6 +1530,8 @@ class BoomBeachSonarApp(tk.Tk):
         self,
         message: str,
     ) -> None:
+        if manual_provider(self.__dict__.get("page")) is not None and not message.startswith("[人工试运行"):
+            message = "[人工试运行] " + message
         logger.info(
             "%s",
             message,

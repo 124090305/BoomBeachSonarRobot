@@ -8,6 +8,7 @@ from typing import Callable
 import config
 from controllers.adb_controller import AdbController
 from logger import get_logger
+from manual_recognition import ManualResultProvider
 from stop_control import (
     interruptible_wait,
     raise_if_stop_requested,
@@ -24,8 +25,9 @@ logger = get_logger(__name__)
 class PageController:
     """组合截图、模板匹配、点击和滑动等页面操作。"""
 
-    def __init__(self, adb: AdbController) -> None:
+    def __init__(self, adb: AdbController, *, manual_results: ManualResultProvider | None = None) -> None:
         self.adb = adb
+        self.manual_results = manual_results
 
     def click_point(
         self,
@@ -112,6 +114,7 @@ class PageController:
         threshold: float = config.DEFAULT_MATCH_THRESHOLD,
         *,
         stop_event: Event | None = None,
+        needs_position: bool = True,
     ) -> MatchResult | None:
         """截取当前画面并查找模板。"""
         raise_if_stop_requested(
@@ -120,6 +123,8 @@ class PageController:
 
         template = self._resolve_template_path(template_path)
         screenshot = self.adb.read_screenshot()
+        if self.manual_results is not None:
+            return self.manual_results.template(screenshot, template, needs_position=needs_position, stop_event=stop_event)
 
         match, best_score = find_template_with_score(
             screenshot,
@@ -161,6 +166,7 @@ class PageController:
                 template_path,
                 threshold=threshold,
                 stop_event=stop_event,
+                needs_position=False,
             )
             is not None
         )
@@ -173,6 +179,7 @@ class PageController:
         poll_interval: float = config.PAGE_POLL_INTERVAL,
         *,
         stop_event: Event | None = None,
+        needs_position: bool = False,
     ) -> MatchResult | None:
         """反复截图，等待模板出现。"""
         timeout = float(timeout)
@@ -204,6 +211,11 @@ class PageController:
             attempts += 1
 
             screenshot = self.adb.read_screenshot()
+            if self.manual_results is not None:
+                return self.manual_results.template(screenshot, template, waiting=True,
+                                                    needs_position=needs_position, stop_event=stop_event,
+                                                    refresh=self.adb.read_screenshot, started_at=deadline-timeout,
+                                                    timeout=timeout, poll_interval=poll_interval)
 
             match, best_score = find_template_with_score(
                 screenshot,
@@ -300,6 +312,7 @@ class PageController:
             timeout=timeout,
             threshold=threshold,
             poll_interval=poll_interval,
+            needs_position=True,
             stop_event=stop_event,
         )
 
@@ -322,6 +335,8 @@ class PageController:
         stop_event: Event | None = None,
     ) -> None:
         """点击已经找到的匹配区域中心。"""
+        if match.center is None:
+            raise ValueError("模板结果没有点击位置")
         x, y = match.center
 
         logger.info(

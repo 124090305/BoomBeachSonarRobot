@@ -9,6 +9,7 @@ import config
 
 from controllers.page_controller import PageController
 from logger import get_logger
+from manual_recognition import manual_provider
 from sonar_config import ACTIVITY_PAGE_CONFIG
 from stop_control import (
     interruptible_wait,
@@ -91,6 +92,7 @@ def detect_sonar_page_state(
     stop_event: Event | None = None,
 ) -> SonarPageState:
     """只截图检查当前声纳相关页面，不进行点击。"""
+    provider = manual_provider(page)
     raise_if_stop_requested(
         stop_event
     )
@@ -98,6 +100,9 @@ def detect_sonar_page_state(
     screenshot = (
         page.adb.read_screenshot()
     )
+
+    if provider is not None:
+        return SonarPageState(provider.page_state(screenshot, stop_event))
 
     quit_match = find_template(
         screenshot,
@@ -268,6 +273,7 @@ def wait_sonar_ready(
     ):
         return None
 
+    provider = manual_provider(page)
     raise_if_stop_requested(
         stop_event
     )
@@ -276,11 +282,12 @@ def wait_sonar_ready(
         page.adb.read_screenshot()
     )
 
-    match, score = (
-        _find_sonar_match(
-            screenshot
-        )
-    )
+    if provider is not None:
+        match = provider.template(screenshot, (ACTIVITY_PAGE_CONFIG.sonar_template,
+                                  ACTIVITY_PAGE_CONFIG.sonar_label_template), stop_event=stop_event)
+        score = float("nan")
+    else:
+        match, score = _find_sonar_match(screenshot)
 
     raise_if_stop_requested(
         stop_event
@@ -325,11 +332,13 @@ def wait_sonar_ready(
             page.adb.read_screenshot()
         )
 
-        match, score = (
-            _find_sonar_match(
-                screenshot
-            )
-        )
+        if provider is not None:
+            return provider.template(screenshot, (ACTIVITY_PAGE_CONFIG.sonar_template,
+                                     ACTIVITY_PAGE_CONFIG.sonar_label_template),
+                                     waiting=True, stop_event=stop_event, refresh=page.adb.read_screenshot,
+                                     started_at=deadline-actual_timeout, timeout=actual_timeout,
+                                     poll_interval=config.PAGE_POLL_INTERVAL)
+        match, score = _find_sonar_match(screenshot)
 
         raise_if_stop_requested(
             stop_event

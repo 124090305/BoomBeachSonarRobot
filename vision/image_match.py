@@ -14,12 +14,16 @@ class MatchResult:
     """模板匹配结果。"""
 
     score: float
-    top_left: tuple[int, int]
-    bottom_right: tuple[int, int]
+    top_left: tuple[int, int] | None
+    bottom_right: tuple[int, int] | None
+    source: str = "vision"
+    request_id: str | None = None
 
     @property
-    def center(self) -> tuple[int, int]:
+    def center(self) -> tuple[int, int] | None:
         """返回匹配区域的中心坐标。"""
+        if self.top_left is None or self.bottom_right is None:
+            return None
         x1, y1 = self.top_left
         x2, y2 = self.bottom_right
 

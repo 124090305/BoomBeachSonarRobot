@@ -9,7 +9,9 @@ from flows import (
     LevelState,
     run_multi_level_loop,
 )
-from logger import get_logger
+from logger import get_logger, trial_log_scope
+from manual_recognition import manual_provider
+from stop_control import StopRequestedError
 
 from .runtime_context import AppRuntimeContext
 
@@ -50,10 +52,14 @@ class AutoProbeLoopBridge:
 
     def start(self) -> bool:
         """启动后台循环；已经运行时返回 False。"""
-        if self.running:
+        if self.thread is not None:
             return False
 
         self.stop_event.clear()
+        provider = manual_provider(self.context.page)
+        if provider is not None:
+            provider.begin_run()
+            provider.publish = lambda request: self.events.put(("manual_request", request))
         self.thread = threading.Thread(
             target=self._worker,
             name="auto-probe-loop",
@@ -64,6 +70,9 @@ class AutoProbeLoopBridge:
 
     def request_stop(self) -> None:
         self.stop_event.set()
+        provider = manual_provider(self.context.page)
+        if provider is not None:
+            provider.cancel()
 
     def get_event_nowait(self) -> AutoLoopEvent:
         return self.events.get_nowait()
@@ -95,12 +104,24 @@ class AutoProbeLoopBridge:
         self.wait(timeout=None)
         self.mark_finished()
 
+        # 主窗口关闭后已无消息消费者；后台退出后释放残留请求携带的图片。
+        while True:
+            try:
+                self.events.get_nowait()
+            except queue.Empty:
+                break
+
         context = self.context
 
         with context.control_lock:
             context.network.restore_network()
 
     def _worker(self) -> None:
+        provider = manual_provider(self.context.page)
+        with trial_log_scope(provider.session_id if provider is not None else None):
+            self._run_worker()
+
+    def _run_worker(self) -> None:
         context = self.context
 
         try:
@@ -124,6 +145,9 @@ class AutoProbeLoopBridge:
                 if summary.stop_reason != "requested":
                     context.network.restore_network()
 
+        except StopRequestedError:
+            self.events.put(("stopped", None))
+            return
         except Exception as exc:
             try:
                 with context.control_lock:

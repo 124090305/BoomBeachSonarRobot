@@ -10,6 +10,7 @@ import config
 from controllers.adb_controller import AdbController
 from controllers.page_controller import PageController
 from logger import get_logger
+from manual_recognition import manual_provider
 from sonar import (
     Cell,
     ConfirmedShip,
@@ -145,6 +146,10 @@ def prepare_probe_once(
         )
 
     row, col = cell
+
+    provider = manual_provider(page)
+    if provider is not None:
+        provider.target = cell
 
     x, y = board.screen_point(
         row,

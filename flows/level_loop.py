@@ -7,6 +7,7 @@ from typing import Callable
 
 from controllers import AdbController, GameController, NetworkController, PageController
 from logger import get_logger
+from manual_recognition import manual_provider
 from sonar import CheckerboardHuntStrategy, SonarBoard, SonarStrategy
 from sonar_config import get_level_config
 from stop_control import StopRequestedError, raise_if_stop_requested
@@ -83,6 +84,9 @@ def run_multi_level_loop(
     last_result = None
 
     while True:
+        provider = manual_provider(page)
+        if provider is not None:
+            provider.bind(state.level, state.board, state.strategy)
         round_offset = total_rounds
 
         def emit_round(index, result):
