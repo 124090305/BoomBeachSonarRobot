@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from manual_recognition import set_manual_step, manual_action
+
 from threading import Event
 
 import config
@@ -39,6 +41,7 @@ def ensure_auto_probe_ready(
         stop_event
     )
 
+    manual_action(page, "network_query")
     network_state = network.get_state()
 
     raise_if_stop_requested(
@@ -51,6 +54,7 @@ def ensure_auto_probe_ready(
             "请先恢复网络。"
         )
 
+    set_manual_step(page, "ready.initial")
     page_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
@@ -58,6 +62,7 @@ def ensure_auto_probe_ready(
 
     if page_state == SonarPageState.ACTIVITY_DETAIL:
         if not network_state.weak_enabled:
+            manual_action(page, "weak_on")
             network.enable_weak_network()
 
             raise_if_stop_requested(
@@ -66,6 +71,7 @@ def ensure_auto_probe_ready(
 
     else:
         if network_state.weak_enabled:
+            manual_action(page, "weak_off")
             network.disable_weak_network()
 
             raise_if_stop_requested(
@@ -88,12 +94,14 @@ def ensure_auto_probe_ready(
                 "没有进入活动棋盘页面"
             )
 
+    manual_action(page, "network_query")
     final_network = network.get_state()
 
     raise_if_stop_requested(
         stop_event
     )
 
+    set_manual_step(page, "ready.final")
     final_page = detect_sonar_page_state(
         page,
         stop_event=stop_event,

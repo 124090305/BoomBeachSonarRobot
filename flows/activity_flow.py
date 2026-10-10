@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from manual_recognition import set_manual_step, manual_action
+
 from dataclasses import dataclass
 from threading import Event
 
@@ -44,6 +46,7 @@ def dismiss_activity_start_hint(
     stop_event: Event | None = None,
 ) -> None:
     """点击棋盘外安全点，关闭“点击任意地方开始”提示。"""
+    manual_action(page, "wait", seconds=ACTIVITY_PAGE_CONFIG.activity_tap_to_start_delay)
     interruptible_wait(
         ACTIVITY_PAGE_CONFIG
         .activity_tap_to_start_delay,
@@ -92,6 +95,7 @@ def enter_activity_initial(
         stop_event
     )
 
+    set_manual_step(page, "entry.initial")
     initial_state = (
         detect_sonar_page_state(
             page,
@@ -99,6 +103,7 @@ def enter_activity_initial(
         )
     )
 
+    manual_action(page, "network_query")
     network_state = (
         network.get_state()
     )
@@ -121,6 +126,7 @@ def enter_activity_initial(
             == SonarPageState.ACTIVITY_DETAIL
         ):
             if not network_state.weak_enabled:
+                manual_action(page, "weak_on")
                 network.enable_weak_network()
                 weak_enabled_by_flow = True
 
@@ -128,6 +134,7 @@ def enter_activity_initial(
                     stop_event
                 )
 
+            set_manual_step(page, "entry.final")
             final_state = (
                 detect_sonar_page_state(
                     page,
@@ -153,6 +160,7 @@ def enter_activity_initial(
                 "主岛上没有检测到声纳"
             )
 
+        set_manual_step(page, "entry.button")
         activity_match = (
             page.wait_and_click(
                 ACTIVITY_PAGE_CONFIG
@@ -183,6 +191,7 @@ def enter_activity_initial(
         )
 
         if not network_state.weak_enabled:
+            manual_action(page, "weak_on")
             network.enable_weak_network()
             weak_enabled_by_flow = True
 
@@ -190,12 +199,14 @@ def enter_activity_initial(
             stop_event
         )
 
+        manual_action(page, "wait", seconds=ACTIVITY_PAGE_CONFIG.initial_weak_apply_delay)
         interruptible_wait(
             ACTIVITY_PAGE_CONFIG
             .initial_weak_apply_delay,
             stop_event,
         )
 
+        manual_action(page, "wait", seconds=ACTIVITY_PAGE_CONFIG.activity_list_before_swipe_delay)
         interruptible_wait(
             ACTIVITY_PAGE_CONFIG
             .activity_list_before_swipe_delay,
@@ -238,6 +249,7 @@ def enter_activity_initial(
                 stop_event=stop_event,
             )
 
+        manual_action(page, "wait", seconds=ACTIVITY_PAGE_CONFIG.activity_detail_entry_delay)
         interruptible_wait(
             ACTIVITY_PAGE_CONFIG
             .activity_detail_entry_delay,
@@ -263,6 +275,7 @@ def enter_activity_initial(
             detail_y,
         )
 
+        set_manual_step(page, "entry.board")
         ready = (
             wait_activity_detail_ready(
                 page,
@@ -285,6 +298,7 @@ def enter_activity_initial(
             stop_event=stop_event,
         )
 
+        set_manual_step(page, "entry.final")
         final_state = (
             detect_sonar_page_state(
                 page,
@@ -301,6 +315,7 @@ def enter_activity_initial(
                 f"{final_state.value}"
             )
 
+        manual_action(page, "network_query")
         current_network_state = (
             network.get_state()
         )
@@ -344,6 +359,7 @@ def enter_activity_initial(
     except Exception:
         if weak_enabled_by_flow:
             try:
+                manual_action(page, "weak_off")
                 network.disable_weak_network()
             except Exception:
                 logger.exception(
@@ -369,6 +385,7 @@ def reenter_activity_for_probe(
         "开始重新进入声纳活动"
     )
 
+    set_manual_step(page, "probe.button")
     activity_match = page.wait_and_click(
         ACTIVITY_PAGE_CONFIG.activity_button_template,
         timeout=ACTIVITY_PAGE_CONFIG.activity_button_timeout,
@@ -390,6 +407,7 @@ def reenter_activity_for_probe(
         activity_match.score,
     )
 
+    manual_action(page, "wait", seconds=ACTIVITY_PAGE_CONFIG.activity_detail_entry_delay)
     interruptible_wait(
         ACTIVITY_PAGE_CONFIG.activity_detail_entry_delay,
         stop_event,
@@ -412,6 +430,7 @@ def reenter_activity_for_probe(
         detail_y,
     )
 
+    set_manual_step(page, "probe.return")
     ready = wait_activity_detail_ready(
         page,
         timeout=(

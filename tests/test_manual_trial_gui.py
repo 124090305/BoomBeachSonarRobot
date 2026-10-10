@@ -70,15 +70,15 @@ class ManualTrialGuiTests(unittest.TestCase):
 
     def dialog_ready(self):
         dialog = self.app._recognition_dialog
-        return dialog is not None and dialog.winfo_exists()
+        return dialog is not None and dialog.winfo_exists() and not dialog._submitted
 
     def respond(self, value):
         dialog = self.app._recognition_dialog
+        dialog.select_choice(value)
         if value == "found" and dialog.request.needs_position:
             from types import SimpleNamespace
             dialog.select_position(SimpleNamespace(x=10, y=20))
-        else:
-            dialog.buttons[value].invoke()
+        dialog.confirm()
 
     def test_mode_isolation_idle_lock_and_no_extra_confirmation(self):
         self.assertFalse(self.app.manual_recognition_var.get())
@@ -186,13 +186,15 @@ class ManualTrialGuiTests(unittest.TestCase):
         x, y = 100, 80
         expected = dialog.transforms[0].original_point(x, y)
         dialog.canvases[0].event_generate("<Button-1>", x=x, y=y)
+        dialog.select_choice("found")
+        dialog.confirm()
         thread.join(2)
         self.assertFalse(thread.is_alive())
         self.assertEqual(results.get_nowait().center, expected)
         self.device.click.assert_called_once_with(*expected)
         np.testing.assert_array_equal(self.device.image, original)
         # 弹窗收到双击或残留事件也不会再次写入。
-        dialog.answer("found", coordinates=expected)
+        dialog.confirm()
         self.assertEqual(self.device.click.call_count, 1)
 
     def _launch_refreshing_wait(self, timeout=.02):
@@ -223,8 +225,8 @@ class ManualTrialGuiTests(unittest.TestCase):
         self.pump(lambda: dialog.displayed_frame.number > first_number and
                   dialog.photos[0].get(5, 5) == (40, 100, 20))
         self.assertIs(dialog, self.app._recognition_dialog)
-        self.assertEqual(len(dialog.photos), 2)  # 主图和模板引用均不积压。
-        self.assertEqual(len(dialog.canvases[0].find_all()), 1)
+        self.assertEqual(len(dialog.photos), 1)  # 模板在默认收起的详情中。
+        self.assertEqual(len(dialog.canvases[0].find_all()), 4)  # 原图加本帧自动候选标记。
         np.testing.assert_array_equal(dialog.displayed_frame.image[20:20+height, 20:20+width], template)
         self.assertEqual(self.wait_results, [])
         self.device.click.assert_not_called()
@@ -245,6 +247,8 @@ class ManualTrialGuiTests(unittest.TestCase):
         frame = dialog.displayed_frame
         expected = dialog.transforms[0].original_point(40, 25)
         dialog.select_position(SimpleNamespace(x=40, y=25))
+        dialog.select_choice("found")
+        dialog.confirm()
         self.pump(lambda: self.app._level_change_allowed())
         self.assertEqual(len(self.wait_results), 1)
         self.assertEqual(self.wait_results[0].center, expected)
@@ -262,10 +266,95 @@ class ManualTrialGuiTests(unittest.TestCase):
         dialog = self._launch_refreshing_wait(timeout=30)
         self._observe_new_frame(dialog)
         self.assertLess(float(dialog.wait_progress["value"]), 100.)
-        dialog.buttons["timeout"].invoke()
+        dialog.select_choice("timeout")
+        dialog.confirm()
         self.pump(lambda: self.app._level_change_allowed())
         self.assertEqual(self.wait_results, [None])
         self.device.click.assert_not_called()
+
+    def test_selection_survives_refresh_and_auto_candidate_needs_explicit_confirmation(self):
+        import json
+        dialog = self._launch_refreshing_wait()
+        self.assertEqual(dialog.choice_var.get(), "请选择")
+        self.assertFalse(dialog._details_open)
+        dialog.select_choice("found")
+        dialog.confirm()  # 尚无位置，不能提交。
+        self.assertFalse(dialog._submitted)
+        self._observe_new_frame(dialog)
+        self.assertEqual(dialog.selected_value(), "found")
+        self.assertEqual(dialog.displayed_frame.reference.value, "found")
+        self.assertIn("相似度", dialog.reference_text.get())
+        self.assertIn("蓝色自动候选", dialog.action_text.get())
+        self.assertEqual(self.wait_results, [])
+        point = dialog.displayed_frame.reference.point
+        frame_number = dialog.displayed_frame.number
+        dialog.assumed_var.set(True)
+        dialog.confirm()
+        dialog.confirm()
+        self.pump(lambda: self.app._level_change_allowed())
+        self.device.click.assert_called_once_with(*point)
+        provider = manual_provider(self.app.page)
+        record = json.loads(provider.last_diagnostic_path.with_suffix('.json').read_text(encoding='utf-8'))
+        self.assertEqual(record['frame_id'], frame_number)
+        self.assertEqual(record['human']['basis'], 'assumed')
+
+    def test_point_only_locates_and_stale_point_cannot_cross_frames(self):
+        from types import SimpleNamespace
+        dialog = self._launch_refreshing_wait()
+        self._observe_new_frame(dialog)
+        frame_number = dialog.displayed_frame.number
+        dialog.select_position(SimpleNamespace(x=40, y=25))
+        self.assertIsNone(dialog.selected_value())
+        self.assertFalse(dialog._submitted)
+        dialog.select_choice('found')
+        self.pump(lambda: dialog.displayed_frame.number > frame_number)
+        self.assertEqual(dialog.selected_value(), 'found')
+        self.assertIsNone(dialog._chosen_point())
+        dialog.confirm()
+        self.assertFalse(dialog._submitted)
+        self.device.click.assert_not_called()
+        dialog.select_choice('missing')
+        dialog.confirm()
+        self.pump(lambda: self.app._level_change_allowed())
+        self.assertEqual(self.wait_results, [None])
+
+    def test_same_window_reused_for_next_request_and_current_action_is_shown(self):
+        self.enable()
+        with fast_flow():
+            self.app.start_auto_loop()
+            self.pump(self.dialog_ready)
+            dialog = self.app._recognition_dialog
+            first = dialog.request.request_id
+            self.respond('activity_detail')
+            self.assertTrue(dialog.winfo_exists())
+            self.assertTrue(dialog._submitted)
+            dialog.show_action(first, '正在读取真实网络状态')
+            self.assertEqual(dialog.action_text.get(), '正在读取真实网络状态')
+            self.pump(lambda: self.dialog_ready() and dialog.request.request_id != first)
+            self.assertIs(self.app._recognition_dialog, dialog)
+            self.assertEqual(dialog.choice_var.get(), '请选择')
+            old_text = dialog.action_text.get()
+            dialog.show_action(first, '过期动作')
+            self.assertEqual(dialog.action_text.get(), old_text)
+            self.app.stop_auto_loop()
+            self.pump(lambda: self.app._level_change_allowed())
+
+    def test_small_window_keeps_buttons_visible_with_details(self):
+        dialog = self._launch_refreshing_wait()
+        self.app.deiconify()
+        dialog.geometry('640x520')
+        self.pump(lambda: dialog.winfo_viewable() and dialog._resize_after is None)
+        for expanded in (False, True):
+            if expanded:
+                dialog.toggle_details()
+            self.app.update_idletasks()
+            for button in (dialog.confirm_button, dialog.stop_button, dialog.details_button):
+                self.assertTrue(button.winfo_viewable())
+                self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
+                                     dialog.winfo_rooty() + dialog.winfo_height())
+            self.assertEqual(dialog.winfo_width(), 640)
+        dialog.cancel()
+        self.pump(lambda: self.app._level_change_allowed())
 
     def _stop_refreshing_wait(self, close_kind):
         dialog = self._launch_refreshing_wait()

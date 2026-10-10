@@ -81,7 +81,7 @@ class ManualWaitTests(unittest.TestCase):
     def test_overdue_keeps_refreshing_latest_frame_without_advancing(self):
         device = Captures()
         page = PageController(device, manual_results=self.provider)
-        with patch("controllers.page_controller.find_template_with_score", side_effect=AssertionError("自动识别被调用")):
+        with patch("controllers.page_controller.find_template_with_score", side_effect=AssertionError("误入正式模式的自动返回分支")):
             thread = self.start(lambda: page.wait_and_click("retry1.png", timeout=.025,
                                 poll_interval=.02, wait_seconds=0, stop_event=self.stop), device)
             request = self.requests.get(timeout=2)
@@ -162,12 +162,25 @@ class ManualWaitTests(unittest.TestCase):
         self.assertIsNone(self.provider.pending)
         self.assertIsNone(self.provider.take_latest_frame())
 
+    def test_device_failure_after_template_submission_keeps_original_exception_path(self):
+        device = Captures(block_second=True, fail_second=True)
+        page = PageController(device, manual_results=self.provider)
+        thread = self.start(lambda: page.wait_template("retry1.png", timeout=0,
+                            poll_interval=.01, stop_event=self.stop), device)
+        request = self.requests.get(timeout=2)
+        self.assertTrue(device.second_started.wait(2))
+        self.provider.submit(request.request_id, value="found", frame_id=1)
+        device.release.set()
+        thread.join(2)
+        self.assertIsInstance(self.result.get_nowait(), RuntimeError)
+        device.click.assert_not_called()
+
     def test_retry_refresh_and_manual_timeout_return_displayed_diagnostic(self):
         device = Captures()
         page = PageController(device, manual_results=self.provider)
         with patch("flows.auto_probe_recovery.AUTO_PROBE_CONFIG", replace(AUTO_PROBE_CONFIG, retry_wait_timeout=0)), \
              patch("flows.auto_probe_recovery.config.PAGE_POLL_INTERVAL", .02), \
-             patch("flows.auto_probe_recovery.find_template_with_score", side_effect=AssertionError("自动识别")):
+             patch("flows.auto_probe_recovery.find_template_with_score", side_effect=AssertionError("误入正式模式的自动返回分支")):
             thread = self.start(lambda: wait_retry_with_failure_capture(device, page=page, stop_event=self.stop), device)
             request = self.requests.get(timeout=2)
             self.until(lambda: len(device.calls) >= 3)
@@ -183,7 +196,7 @@ class ManualWaitTests(unittest.TestCase):
         device = Captures()
         page = PageController(device, manual_results=self.provider)
         def publish(request):
-            if "活动按钮" in request.step:
+            if request.prompt_key == "entry.home":
                 self.provider.submit(request.request_id, value="found")
             elif request.wait_started_at is None:
                 self.provider.submit(request.request_id, value="missing")
@@ -192,7 +205,7 @@ class ManualWaitTests(unittest.TestCase):
         self.provider.publish = publish
         with patch("flows.sonar_page.config.PAGE_POLL_INTERVAL", .02), \
              patch("controllers.page_controller.interruptible_wait"), \
-             patch("flows.sonar_page.find_template_with_score", side_effect=AssertionError("自动识别")):
+             patch("flows.sonar_page.find_template_with_score", side_effect=AssertionError("误入正式模式的自动返回分支")):
             thread = self.start(lambda: wait_sonar_ready(page, timeout=0, stop_event=self.stop), device)
             request = self.requests.get(timeout=2)
             self.assertEqual(len(request.templates), 2)

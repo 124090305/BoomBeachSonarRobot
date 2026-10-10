@@ -8,7 +8,7 @@ from typing import Callable
 import config
 from controllers.adb_controller import AdbController
 from logger import get_logger
-from manual_recognition import ManualResultProvider
+from manual_recognition import manual_action, ManualResultProvider
 from stop_control import (
     interruptible_wait,
     raise_if_stop_requested,
@@ -55,6 +55,7 @@ class PageController:
             y,
         )
 
+        manual_action(self, "click", point=(x, y))
         self.adb.click(x, y)
 
         if after_click is not None:
@@ -95,6 +96,7 @@ class PageController:
             duration_ms,
         )
 
+        manual_action(self, "swipe")
         self.adb.swipe(
             int(start_x),
             int(start_y),
@@ -122,9 +124,10 @@ class PageController:
         )
 
         template = self._resolve_template_path(template_path)
+        manual_action(self, "recognize")
         screenshot = self.adb.read_screenshot()
         if self.manual_results is not None:
-            return self.manual_results.template(screenshot, template, needs_position=needs_position, stop_event=stop_event)
+            return self.manual_results.template(screenshot, template, needs_position=needs_position, stop_event=stop_event, threshold=threshold)
 
         match, best_score = find_template_with_score(
             screenshot,
@@ -210,12 +213,13 @@ class PageController:
 
             attempts += 1
 
+            manual_action(self, "recognize")
             screenshot = self.adb.read_screenshot()
             if self.manual_results is not None:
                 return self.manual_results.template(screenshot, template, waiting=True,
                                                     needs_position=needs_position, stop_event=stop_event,
                                                     refresh=self.adb.read_screenshot, started_at=deadline-timeout,
-                                                    timeout=timeout, poll_interval=poll_interval)
+                                                    timeout=timeout, poll_interval=poll_interval, threshold=threshold)
 
             match, best_score = find_template_with_score(
                 screenshot,

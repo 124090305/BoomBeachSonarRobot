@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from manual_recognition import set_manual_step, manual_action
+
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -170,6 +172,7 @@ def prepare_probe_once(
         y,
     )
 
+    set_manual_step(page, "probe.ready")
     ready = wait_activity_detail_ready(
         page,
         timeout=(
@@ -179,6 +182,7 @@ def prepare_probe_once(
     )
 
     if not ready:
+        set_manual_step(page, "probe.diagnostic")
         current_state = (
             detect_sonar_page_state(
                 page,
@@ -234,6 +238,7 @@ def prepare_probe_once(
         stop_event
     )
 
+    manual_action(page, "before")
     actual_progress.before_path = adb.take_screenshot(
         actual_progress.before_path
     )
@@ -265,6 +270,7 @@ def prepare_probe_once(
         "准备退出当前活动棋盘页面"
     )
 
+    set_manual_step(page, "probe.quit")
     quit_match = page.click_template(
         ACTIVITY_PAGE_CONFIG.quit_activity_template,
         stop_event=stop_event,
@@ -293,6 +299,7 @@ def prepare_probe_once(
         "重新进入活动后截图"
     )
 
+    manual_action(page, "after")
     actual_progress.after_path = adb.take_screenshot(
         actual_progress.after_path
     )

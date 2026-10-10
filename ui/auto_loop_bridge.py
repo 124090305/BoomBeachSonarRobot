@@ -60,6 +60,7 @@ class AutoProbeLoopBridge:
         if provider is not None:
             provider.begin_run()
             provider.publish = lambda request: self.events.put(("manual_request", request))
+            provider.publish_action = lambda action: self.events.put(("manual_action", action))
         self.thread = threading.Thread(
             target=self._worker,
             name="auto-probe-loop",

@@ -86,10 +86,6 @@ def fast_flow():
     with ExitStack() as stack:
         for module in ("controllers.page_controller", "flows.activity_flow", "flows.sonar_page", "flows.auto_probe_recovery"):
             stack.enter_context(patch(module + ".interruptible_wait", side_effect=wait))
-        for name in ("controllers.page_controller.find_template_with_score", "flows.sonar_page.find_template",
-                     "flows.sonar_page.find_template_with_score", "flows.auto_probe_recovery.find_template_with_score",
-                     "flows.auto_probe_flow.classify_diamond_hit", "flows.auto_probe_flow.classify_diamond_hit_multiframe"):
-            stack.enter_context(patch(name, side_effect=AssertionError("试运行不得调用视觉识别")))
         yield
 
 
@@ -162,7 +158,7 @@ class TrialFlowTests(unittest.TestCase):
         self.assertGreater(self.device.capture_count, 2)
 
     def test_retry_timeout_runs_original_restart_without_double_commit(self):
-        self.choice = lambda r: "miss" if r.kind == "probe" else "timeout" if "重试按钮" in r.step else None
+        self.choice = lambda r: "miss" if r.kind == "probe" else "timeout" if r.prompt_key == "retry" else None
         summary = self.run_round()
         self.game.restart_game.assert_called_once()
         self.assertEqual(summary.misses, 1)

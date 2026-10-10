@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from manual_recognition import set_manual_step, manual_action
+
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -97,9 +99,10 @@ def wait_retry_with_failure_capture(
         attempts += 1
         screenshot = adb.read_screenshot()
         if provider is not None:
+            set_manual_step(page, "retry")
             match = provider.template(screenshot, template_path, waiting=True,
                                       needs_position=True, stop_event=stop_event, refresh=adb.read_screenshot,
-                                      started_at=deadline-timeout, timeout=timeout, poll_interval=poll_interval)
+                                      started_at=deadline-timeout, timeout=timeout, poll_interval=poll_interval, threshold=threshold)
             return match, provider.last_diagnostic_path if match is None else None
 
         match, best_score = find_template_with_score(
@@ -178,6 +181,7 @@ def wait_retry_with_failure_capture(
 
             return None, failure_path
 
+        manual_action(page, "wait", seconds=min(poll_interval, remaining))
         interruptible_wait(
             min(
                 poll_interval,
@@ -203,6 +207,7 @@ def recover_after_hit_once(
         "检测到 HIT：跳过 REJECT/retry，直接恢复正常联网"
     )
 
+    manual_action(page, "network_query")
     state = network.get_state()
 
     raise_if_stop_requested(
@@ -219,6 +224,7 @@ def recover_after_hit_once(
             "HIT 恢复前DROP 弱网状态没有开启"
         )
 
+    manual_action(page, "restore")
     network.restore_network()
 
     raise_if_stop_requested(
@@ -234,6 +240,7 @@ def recover_after_hit_once(
         online_wait,
     )
 
+    manual_action(page, "wait", seconds=online_wait)
     interruptible_wait(
         online_wait,
         stop_event,
@@ -246,12 +253,14 @@ def recover_after_hit_once(
         stop_event=stop_event,
     )
 
+    manual_action(page, "network_query")
     final_network = network.get_state()
 
     raise_if_stop_requested(
         stop_event
     )
 
+    set_manual_step(page, "hit.final")
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
@@ -315,6 +324,7 @@ def _recover_after_strategy_done_once(
         "策略已确认全部潜艇：进入胜利处理边界，停止重新弱网和重进活动"
     )
 
+    manual_action(page, "restore")
     network.restore_network()
 
     raise_if_stop_requested(
@@ -329,17 +339,20 @@ def _recover_after_strategy_done_once(
             "最后一发 HIT 已恢复正常联网，等待 %.1f 秒完成结算",
             online_wait,
         )
+        manual_action(page, "wait", seconds=online_wait)
         interruptible_wait(
             online_wait,
             stop_event,
         )
 
+    manual_action(page, "network_query")
     final_network = network.get_state()
 
     raise_if_stop_requested(
         stop_event
     )
 
+    set_manual_step(page, "done.final")
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
@@ -379,6 +392,7 @@ def recover_after_miss_once(
         "开始执行 MISS 恢复链"
     )
 
+    manual_action(page, "network_query")
     state = network.get_state()
 
     raise_if_stop_requested(
@@ -401,6 +415,7 @@ def recover_after_miss_once(
     reject_enabled_by_flow = False
 
     try:
+        manual_action(page, "reject_on")
         network.enable_reject_network()
         reject_enabled_by_flow = True
 
@@ -419,6 +434,7 @@ def recover_after_miss_once(
     except StopRequestedError:
         if reject_enabled_by_flow:
             try:
+                manual_action(page, "reject_off")
                 network.disable_reject_network()
                 reject_enabled_by_flow = False
             except Exception:
@@ -430,6 +446,7 @@ def recover_after_miss_once(
     except Exception:
         if reject_enabled_by_flow:
             try:
+                manual_action(page, "reject_off")
                 network.disable_reject_network()
             except Exception:
                 logger.exception(
@@ -440,6 +457,7 @@ def recover_after_miss_once(
         raise
 
     if reject_enabled_by_flow:
+        manual_action(page, "reject_off")
         network.disable_reject_network()
         reject_enabled_by_flow = False
 
@@ -459,6 +477,7 @@ def recover_after_miss_once(
             f"失败截图={retry_failure_path}"
         )
 
+    manual_action(page, "wait", seconds=AUTO_PROBE_CONFIG.retry_before_click_delay)
     interruptible_wait(
         AUTO_PROBE_CONFIG.retry_before_click_delay,
         stop_event,
@@ -482,6 +501,7 @@ def recover_after_miss_once(
         retry_match.score,
     )
 
+    manual_action(page, "weak_off")
     network.disable_weak_network()
 
     raise_if_stop_requested(
@@ -495,12 +515,14 @@ def recover_after_miss_once(
         stop_event=stop_event,
     )
 
+    manual_action(page, "network_query")
     final_network = network.get_state()
 
     raise_if_stop_requested(
         stop_event
     )
 
+    set_manual_step(page, "miss.final")
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,

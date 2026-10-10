@@ -1003,20 +1003,29 @@ class BoomBeachSonarApp(tk.Tk):
                 )
                 continue
 
+            if kind == "manual_action":
+                session_id, request_id, text = payload
+                provider = manual_provider(self.page)
+                dialog = self.__dict__.get("_recognition_dialog")
+                if (provider is not None and provider.session_id == session_id and dialog is not None
+                        and dialog.winfo_exists() and not self._closing):
+                    dialog.show_action(request_id, text)
+                continue
             if kind == "manual_request":
                 provider = manual_provider(self.page)
                 if (provider is not None and provider.pending is payload and not self._closing
                         and not self._auto_loop_bridge.stop_event.is_set()):
                     dialog = self._recognition_dialog
-                    if dialog is None or not dialog.winfo_exists() or dialog.request is not payload:
-                        self._close_recognition_dialog()
-                        try:
+                    try:
+                        if dialog is None or not dialog.winfo_exists():
                             self._recognition_dialog = ManualRecognitionDialog(
                                 self, payload, on_submit=self.submit_trial_result, on_stop=self.stop_auto_loop,
                                 on_frame_displayed=provider.mark_displayed)
-                        except Exception as exc:
-                            self.stop_auto_loop()
-                            self._show_error(exc)
+                        elif dialog.request is not payload:
+                            dialog.set_request(payload)
+                    except Exception as exc:
+                        self.stop_auto_loop()
+                        self._show_error(exc)
                     self.auto_loop_state_var.set("等待人工测试结果")
                     self.status_var.set(payload.step)
                 continue

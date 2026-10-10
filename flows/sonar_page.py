@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from manual_recognition import set_manual_step, manual_action
+
 import time
 from enum import Enum
 from pathlib import Path
 from threading import Event
 
 import config
+import cv2
+from recognition_reference import RecognitionReference
 
 from controllers.page_controller import PageController
 from logger import get_logger
@@ -54,6 +58,7 @@ def _template_path(
 
 def _find_sonar_match(
     screenshot,
+    *, measurements=None,
 ) -> tuple[MatchResult | None, float]:
     """在同一张截图中检查两个声纳模板。"""
     best_score = 0.0
@@ -75,6 +80,8 @@ def _find_sonar_match(
             )
         )
 
+        if measurements is not None:
+            measurements.append(dict(template=template_name, score=score, threshold=ACTIVITY_PAGE_CONFIG.sonar_match_threshold))
         best_score = max(
             best_score,
             score,
@@ -97,14 +104,34 @@ def detect_sonar_page_state(
         stop_event
     )
 
+    manual_action(page, "recognize")
     screenshot = (
         page.adb.read_screenshot()
     )
 
     if provider is not None:
-        return SonarPageState(provider.page_state(screenshot, stop_event))
+        measurements = []
+        try:
+            state = classify_sonar_page_image(screenshot, stop_event=stop_event, measurements=measurements)
+            item = measurements[-1] if state != SonarPageState.UNKNOWN else max(measurements, key=lambda m: m["score"])
+            reference = RecognitionReference(state.value, score=item["score"], threshold=item["threshold"],
+                                             details={"templates": measurements, "basis_template": item["template"]})
+        except (ValueError, cv2.error) as exc:
+            reference = RecognitionReference("unavailable", details={"error": str(exc)})
+        return SonarPageState(provider.page_state(screenshot, stop_event, reference=reference))
+    return classify_sonar_page_image(screenshot, stop_event=stop_event)
 
-    quit_match = find_template(
+
+def classify_sonar_page_image(screenshot, *, stop_event=None, measurements=None):
+    """同一套页面优先级；可选收集每个实际模板分数，不采图或操作设备。"""
+    def match_page_template(image, path, *, threshold):
+        if measurements is None:
+            return find_template(image, path, threshold=threshold)
+        match, score = find_template_with_score(image, path, threshold=threshold)
+        measurements.append(dict(template=path.name, score=score, threshold=threshold))
+        return match
+
+    quit_match = match_page_template(
         screenshot,
         _template_path(
             ACTIVITY_PAGE_CONFIG
@@ -128,7 +155,7 @@ def detect_sonar_page_state(
 
     sonar_match, sonar_score = (
         _find_sonar_match(
-            screenshot
+            screenshot, measurements=measurements,
         )
     )
 
@@ -147,7 +174,7 @@ def detect_sonar_page_state(
             .HOME_SONAR_VISIBLE
         )
 
-    activity_match = find_template(
+    activity_match = match_page_template(
         screenshot,
         _template_path(
             ACTIVITY_PAGE_CONFIG
@@ -185,6 +212,7 @@ def detect_sonar_page_state(
     return SonarPageState.UNKNOWN
 
 
+
 def wait_home_island_ready(
     page: PageController,
     timeout: float | None = None,
@@ -202,6 +230,7 @@ def wait_home_island_ready(
         "等待主岛按键出现"
     )
 
+    set_manual_step(page, "entry.home")
     match = page.wait_template(
         ACTIVITY_PAGE_CONFIG
         .activity_button_template,
@@ -283,8 +312,9 @@ def wait_sonar_ready(
     )
 
     if provider is not None:
+        set_manual_step(page, "entry.sonar.first")
         match = provider.template(screenshot, (ACTIVITY_PAGE_CONFIG.sonar_template,
-                                  ACTIVITY_PAGE_CONFIG.sonar_label_template), stop_event=stop_event)
+                                  ACTIVITY_PAGE_CONFIG.sonar_label_template), stop_event=stop_event, threshold=ACTIVITY_PAGE_CONFIG.sonar_match_threshold)
         score = float("nan")
     else:
         match, score = _find_sonar_match(screenshot)
@@ -333,11 +363,12 @@ def wait_sonar_ready(
         )
 
         if provider is not None:
+            set_manual_step(page, "entry.sonar.wait")
             return provider.template(screenshot, (ACTIVITY_PAGE_CONFIG.sonar_template,
                                      ACTIVITY_PAGE_CONFIG.sonar_label_template),
                                      waiting=True, stop_event=stop_event, refresh=page.adb.read_screenshot,
                                      started_at=deadline-actual_timeout, timeout=actual_timeout,
-                                     poll_interval=config.PAGE_POLL_INTERVAL)
+                                     poll_interval=config.PAGE_POLL_INTERVAL, threshold=ACTIVITY_PAGE_CONFIG.sonar_match_threshold)
         match, score = _find_sonar_match(screenshot)
 
         raise_if_stop_requested(
@@ -376,6 +407,7 @@ def wait_sonar_ready(
             )
             return None
 
+        manual_action(page, "wait", seconds=min(config.PAGE_POLL_INTERVAL, remaining))
         interruptible_wait(
             min(
                 config.PAGE_POLL_INTERVAL,

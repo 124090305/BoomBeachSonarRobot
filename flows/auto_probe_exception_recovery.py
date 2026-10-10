@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from manual_recognition import set_manual_step, manual_action
+
 from threading import Event
 
 from controllers.adb_controller import AdbController
@@ -38,6 +40,7 @@ def restart_auto_probe_once(
         max_attempts,
     )
 
+    manual_action(page, "restart")
     game.restart_game(stop_event=stop_event)
 
     raise_if_stop_requested(
@@ -51,10 +54,12 @@ def restart_auto_probe_once(
         stop_event=stop_event,
     )
 
+    set_manual_step(page, "restart.final")
     final_state = detect_sonar_page_state(
         page,
         stop_event=stop_event,
     )
+    manual_action(page, "network_query")
     final_network = network.get_state()
 
     raise_if_stop_requested(

@@ -12,7 +12,8 @@ from controllers.adb_controller import AdbController
 from controllers.network_controller import NetworkController
 from controllers.page_controller import PageController
 from logger import get_logger
-from manual_recognition import manual_provider
+from manual_recognition import manual_provider, manual_action
+from recognition_reference import probe_reference
 from sonar import (
     Cell,
     CellState,
@@ -196,6 +197,58 @@ def _replay_recognized_hit(
     )
 
 
+def recognize_probe_images(adb, before, after, context, *, hit_config=None, recognition_index=0):
+    """共用的只读单格识别，原补帧条件和顺序不变；返回参与判断的补帧。"""
+    extra_images = ()
+    classifier_config = (
+        hit_config
+        if hit_config is not None
+        else build_default_hit_config()
+    )
+
+    result = classify_diamond_hit(
+        before_screenshot=before,
+        after_screenshot=after,
+        center=context.screen_point,
+        config=classifier_config,
+        index=int(recognition_index),
+    )
+
+    second_frame_reader = getattr(
+        adb,
+        "read_screenshot",
+        None,
+    )
+    if (
+        callable(second_frame_reader)
+        and needs_multiframe_confirmation(
+            result,
+            classifier_config,
+        )
+    ):
+        logger.info(
+            "单帧识别处于模糊区，采集第二帧确认："
+            "cell=%s，state=%s，confidence=%.3f，score=%.3f",
+            context.cell,
+            result.state,
+            result.confidence,
+            result.score,
+        )
+        second_after = second_frame_reader()
+        extra_images = (second_after,)
+        result = (
+            classify_diamond_hit_multiframe(
+                before_screenshot=before,
+                after_screenshots=[after, second_after],
+                center=context.screen_point,
+                config=classifier_config,
+                index=int(recognition_index),
+            )
+        )
+
+    return result, extra_images
+
+
 def _complete_recognition_and_sync(
     adb: AdbController,
     strategy: SonarStrategy,
@@ -208,57 +261,10 @@ def _complete_recognition_and_sync(
 ) -> None:
     """完整完成识别、策略写入和棋盘同步，中间不检查停止。"""
     if actual_progress.recognition is None:
-        before = adb.read_image(
-            context.before_path
-        )
-        after = adb.read_image(
-            context.after_path
-        )
-
-        classifier_config = (
-            hit_config
-            if hit_config is not None
-            else build_default_hit_config()
-        )
-
-        actual_progress.recognition = classify_diamond_hit(
-            before_screenshot=before,
-            after_screenshot=after,
-            center=context.screen_point,
-            config=classifier_config,
-            index=int(recognition_index),
-        )
-
-        second_frame_reader = getattr(
-            adb,
-            "read_screenshot",
-            None,
-        )
-        if (
-            callable(second_frame_reader)
-            and needs_multiframe_confirmation(
-            actual_progress.recognition,
-            classifier_config,
-            )
-        ):
-            logger.info(
-                "单帧识别处于模糊区，采集第二帧确认："
-                "cell=%s，state=%s，confidence=%.3f，score=%.3f",
-                context.cell,
-                actual_progress.recognition.state,
-                actual_progress.recognition.confidence,
-                actual_progress.recognition.score,
-            )
-            second_after = second_frame_reader()
-            actual_progress.recognition = (
-                classify_diamond_hit_multiframe(
-                    before_screenshot=before,
-                    after_screenshots=[after, second_after],
-                    center=context.screen_point,
-                    config=classifier_config,
-                    index=int(recognition_index),
-                )
-            )
+        before = adb.read_image(context.before_path)
+        after = adb.read_image(context.after_path)
+        actual_progress.recognition, _ = recognize_probe_images(
+            adb, before, after, context, hit_config=hit_config, recognition_index=recognition_index)
 
     if actual_progress.hit is None:
         recognition_state = actual_progress.recognition.state
@@ -552,8 +558,14 @@ def run_auto_probe_once(
     if provider is not None and actual_progress.recognition is None:
         before = adb.read_image(context.before_path)
         after = adb.read_image(context.after_path)
-        actual_progress.recognition = provider.probe(before, after, context, stop_event)
+        manual_action(page, "reference")
+        reference_config = hit_config if hit_config is not None else build_default_hit_config()
+        automatic, extra_images = recognize_probe_images(
+            adb, before, after, context, hit_config=reference_config, recognition_index=recognition_index)
+        actual_progress.recognition = provider.probe(
+            before, after, context, stop_event, reference=probe_reference(automatic, reference_config), extra_images=extra_images)
 
+    manual_action(page, "commit")
     _complete_recognition_and_sync(
         adb=adb,
         strategy=strategy,
@@ -626,6 +638,7 @@ def run_auto_probe_once(
         stop_event
     )
 
+    manual_action(page, "next")
     next_cell = strategy.choose_next_cell()
 
     result = AutoProbeOnceResult(

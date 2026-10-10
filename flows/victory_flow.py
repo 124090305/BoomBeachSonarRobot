@@ -6,6 +6,7 @@ from controllers.page_controller import PageController
 from logger import get_logger
 from sonar_config import ACTIVITY_PAGE_CONFIG, ActivityPageConfig
 from stop_control import raise_if_stop_requested
+from manual_recognition import set_manual_step
 
 
 logger = get_logger(__name__)
@@ -23,6 +24,7 @@ def handle_victory_transition(
 ) -> int:
     """识别并连续跳过胜利页面，确认下一关活动棋盘页面就绪。"""
     raise_if_stop_requested(stop_event)
+    set_manual_step(page, "victory.first")
     match = page.wait_template(
         flow_config.victory_template,
         timeout=flow_config.victory_wait_timeout,
@@ -50,6 +52,7 @@ def handle_victory_transition(
             wait_seconds=flow_config.victory_click_delay,
             stop_event=stop_event,
         )
+        set_manual_step(page, "victory.followup")
         match = page.wait_template(
             flow_config.victory_template,
             timeout=flow_config.victory_followup_timeout,
@@ -61,6 +64,7 @@ def handle_victory_transition(
             f"连续胜利页面超过上限 {flow_config.victory_max_rounds}"
         )
 
+    set_manual_step(page, "victory.next")
     ready = page.wait_template(
         flow_config.quit_activity_template,
         timeout=flow_config.next_level_ready_timeout,
